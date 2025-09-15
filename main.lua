@@ -250,7 +250,7 @@ print(name..","..count)
 end
 end)
 
--- ======= 装飾用の丸い円（中央固定・1個だけ） =======
+-- ======= 装飾用の丸い円（常に画面中央・1個だけ） =======
 local circleEnabled = false
 local circleFolder = Instance.new("Folder", screen)
 circleFolder.Name = "DecorativeCircle"
@@ -263,7 +263,7 @@ local function createCircle(diameter, thickness, color)
     local frame = Instance.new("Frame")
     frame.Size = UDim2.new(0, diameter, 0, diameter)
     frame.AnchorPoint = Vector2.new(0.5,0.5)
-    frame.Position = UDim2.new(0.5, 0, 0.5, 0) -- 📱も💻も中央
+    frame.Position = UDim2.new(0.5, 0, 0.5, 0) -- 💻PCも📱スマホも絶対中央
     frame.BackgroundTransparency = 1
     frame.Parent = circleFolder
 
@@ -287,30 +287,11 @@ makeToggle("中央に丸い円", function()
     end
 end)
 
--- 壁チェック＆チームチェックが動くたびに軽いアニメ
+-- 敵チェックと連動して色を変える
 RunService.RenderStepped:Connect(function()
     if circleEnabled then
         local target = getClosestEnemy()
         local color
         if target and target.Parent then
             local plr = Players:GetPlayerFromCharacter(target.Parent)
-            if plr and isEnemy(plr) and isVisible(target.HumanoidRootPart) then
-                color = Color3.fromRGB(255,0,0) -- 敵が見えてる → 赤
-            else
-                color = Color3.fromRGB(0,255,0) -- 味方 or 壁越し → 緑
-            end
-        else
-            color = Color3.fromRGB(255,100,100) -- デフォルト
-        end
-
-        for _,circle in ipairs(circleFolder:GetChildren()) do
-            -- 色変更
-            local stroke = circle:FindFirstChildOfClass("UIStroke")
-            if stroke then stroke.Color = color end
-
-            -- 簡単な呼吸アニメ
-            local scale = 1 + 0.05*math.sin(tick()*2)
-            circle.Size = UDim2.new(0,100*scale,0,100*scale)
-        end
-    end
-end)
+            if plr and isEnemy(plr) and isVisible(target.Humanoid
