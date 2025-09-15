@@ -249,3 +249,81 @@ for name,count in pairs(lockLog) do
 print(name..","..count)
 end
 end)
+
+-- ======= 装飾用の丸い円 =======
+local circlesEnabled = false
+local followMouse = false
+local circlesFolder = Instance.new("Folder", screen)
+circlesFolder.Name = "DecorativeCircles"
+
+-- 円を作るヘルパー
+local function createRing(parent, diameter, thickness, color, pos)
+    local frame = Instance.new("Frame")
+    frame.Size = UDim2.new(0, diameter, 0, diameter)
+    frame.AnchorPoint = Vector2.new(0.5,0.5)
+    frame.Position = pos or UDim2.new(0.5, 0, 0.5, 0)
+    frame.BackgroundTransparency = 1
+    frame.Parent = parent
+
+    local corner = Instance.new("UICorner", frame)
+    corner.CornerRadius = UDim.new(1, 0)
+
+    local stroke = Instance.new("UIStroke", frame)
+    stroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+    stroke.LineJoinMode = Enum.LineJoinMode.Round
+    stroke.Thickness = thickness or 4
+    stroke.Transparency = 0
+    stroke.Color = color or Color3.fromRGB(255,100,100)
+
+    return frame
+end
+
+local function spawnCircles(count)
+    -- 既存のを消す
+    for _,v in ipairs(circlesFolder:GetChildren()) do v:Destroy() end
+
+    local baseDiameter = 80
+    local gap = 30
+    for i=1,count do
+        local dia = baseDiameter + (i-1)*gap
+        local ring = createRing(circlesFolder, dia, 4, Color3.fromHSV((i/count),1,1))
+        -- 簡単な脈動アニメ
+        spawn(function()
+            local t0 = tick()
+            while ring.Parent do
+                local scale = 1 + 0.05*math.sin((tick()-t0)*2)
+                ring.Size = UDim2.new(0, dia*scale, 0, dia*scale)
+                wait(1/60)
+            end
+        end)
+    end
+end
+
+-- トグル追加
+makeToggle("丸い円を表示", function()
+    circlesEnabled = not circlesEnabled
+    if circlesEnabled then
+        spawnCircles(5)
+    else
+        for _,v in ipairs(circlesFolder:GetChildren()) do v:Destroy() end
+    end
+end)
+
+makeToggle("丸い円マウス追従", function()
+    followMouse = not followMouse
+end)
+
+RunService.RenderStepped:Connect(function()
+    if circlesEnabled then
+        local pos
+        if followMouse then
+            local m = UserInputService:GetMouseLocation()
+            pos = UDim2.new(0, m.X, 0, m.Y)
+        else
+            pos = UDim2.new(0.5, 0, 0.5, 0)
+        end
+        for _,ring in ipairs(circlesFolder:GetChildren()) do
+            ring.Position = pos
+        end
+    end
+end)
