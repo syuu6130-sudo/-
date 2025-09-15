@@ -250,10 +250,13 @@ print(name..","..count)
 end
 end)
 
--- ======= 装飾用の丸い円（常に画面中央・1個だけ） =======
+-- ======= 装飾用の丸い円（スマホはちょい上補正） =======
 local circleEnabled = false
 local circleFolder = Instance.new("Folder", screen)
 circleFolder.Name = "DecorativeCircle"
+
+-- スマホ判定
+local isMobile = (UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled)
 
 -- 円を作る関数
 local function createCircle(diameter, thickness, color)
@@ -263,7 +266,12 @@ local function createCircle(diameter, thickness, color)
     local frame = Instance.new("Frame")
     frame.Size = UDim2.new(0, diameter, 0, diameter)
     frame.AnchorPoint = Vector2.new(0.5,0.5)
-    frame.Position = UDim2.new(0.5, 0, 0.5, 0) -- 💻PCも📱スマホも絶対中央
+    -- 📱スマホなら少し上に補正、💻PCならど真ん中
+    if isMobile then
+        frame.Position = UDim2.new(0.5, 0, 0.45, 0) -- 中央より少し上
+    else
+        frame.Position = UDim2.new(0.5, 0, 0.5, 0)  -- ど真ん中
+    end
     frame.BackgroundTransparency = 1
     frame.Parent = circleFolder
 
@@ -271,8 +279,8 @@ local function createCircle(diameter, thickness, color)
     corner.CornerRadius = UDim.new(1,0)
 
     local stroke = Instance.new("UIStroke", frame)
-    stroke.Thickness = thickness or 4
-    stroke.Color = color or Color3.fromRGB(255,100,100)
+    stroke.Thickness = thickness or 2
+    stroke.Color = color or Color3.fromRGB(255,255,255)
 
     return frame
 end
@@ -281,7 +289,7 @@ end
 makeToggle("中央に丸い円", function()
     circleEnabled = not circleEnabled
     if circleEnabled then
-        createCircle(100, 4, Color3.fromRGB(255,100,100))
+        createCircle(100, 2, Color3.fromRGB(255,255,255))
     else
         for _,v in ipairs(circleFolder:GetChildren()) do v:Destroy() end
     end
@@ -294,4 +302,30 @@ RunService.RenderStepped:Connect(function()
         local color
         if target and target.Parent then
             local plr = Players:GetPlayerFromCharacter(target.Parent)
-            if plr and isEnemy(plr) and isVisible(target.Humanoid
+            if plr and isEnemy(plr) and isVisible(target.HumanoidRootPart) then
+                color = Color3.fromRGB(255,0,0) -- 敵が見えてる → 赤
+            else
+                color = Color3.fromRGB(0,255,0) -- 味方 or 壁越し → 緑
+            end
+        else
+            color = Color3.fromRGB(255,255,255) -- デフォルト 白
+        end
+
+        for _,circle in ipairs(circleFolder:GetChildren()) do
+            -- 色変更
+            local stroke = circle:FindFirstChildOfClass("UIStroke")
+            if stroke then stroke.Color = color end
+
+            -- 呼吸アニメ
+            local scale = 1 + 0.05*math.sin(tick()*2)
+            circle.Size = UDim2.new(0,100*scale,0,100*scale)
+
+            -- 毎フレーム位置補正（スマホはちょい上）
+            if isMobile then
+                circle.Position = UDim2.new(0.5, 0, 0.45, 0)
+            else
+                circle.Position = UDim2.new(0.5, 0, 0.5, 0)
+            end
+        end
+    end
+end)
