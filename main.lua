@@ -250,7 +250,7 @@ print(name..","..count)
 end
 end)
 
--- ======= 装飾用の丸い円（Executer対応・スマホ補正・虹色アニメ） =======
+-- ======= 装飾用の丸い円（直径2倍・Executer対応・スマホ補正・虹色アニメ） =======
 local circleEnabled = false
 local circleFolder = Instance.new("Folder")
 circleFolder.Name = "DecorativeCircle"
@@ -296,7 +296,7 @@ end
 makeToggle("中央に虹色の丸い円", function()
     circleEnabled = not circleEnabled
     if circleEnabled then
-        createCircle(120, 4)
+        createCircle(240, 4) -- 元の120の2倍に
     else
         for _,v in ipairs(circleFolder:GetChildren()) do v:Destroy() end
     end
@@ -312,9 +312,9 @@ RunService.RenderStepped:Connect(function()
             local stroke = circle:FindFirstChildOfClass("UIStroke")
             if stroke then stroke.Color = rainbowColor end
 
-            -- 呼吸アニメ
+            -- 呼吸アニメ（サイズ2倍に対応）
             local scale = 1 + 0.05 * math.sin(tick() * 2)
-            circle.Size = UDim2.new(0, 120 * scale, 0, 120 * scale)
+            circle.Size = UDim2.new(0, 240 * scale, 0, 240 * scale)
 
             -- 位置補正
             if isMobile then
