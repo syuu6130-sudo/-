@@ -250,10 +250,11 @@ print(name..","..count)
 end
 end)
 
--- ======= 装飾用の丸い円（スマホはさらに上補正・虹色アニメ） =======
+-- ======= 装飾用の丸い円（Executer対応・スマホ補正・虹色アニメ） =======
 local circleEnabled = false
-local circleFolder = Instance.new("Folder", screen)
+local circleFolder = Instance.new("Folder")
 circleFolder.Name = "DecorativeCircle"
+circleFolder.Parent = screen -- CoreGui直下
 
 -- スマホ判定
 local isMobile = (UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled)
@@ -270,22 +271,23 @@ local function createCircle(diameter, thickness)
 
     local frame = Instance.new("Frame")
     frame.Size = UDim2.new(0, diameter, 0, diameter)
-    frame.AnchorPoint = Vector2.new(0.5,0.5)
-    -- 📱スマホならさらに上へ補正、💻PCなら中央
-    if isMobile then
-        frame.Position = UDim2.new(0.5, 0, 0.4, 0) -- 中央よりもっと上
-    else
-        frame.Position = UDim2.new(0.5, 0, 0.5, 0) -- ど真ん中
-    end
+    frame.AnchorPoint = Vector2.new(0.5, 0.5)
     frame.BackgroundTransparency = 1
     frame.Parent = circleFolder
 
+    -- 位置補正
+    if isMobile then
+        frame.Position = UDim2.new(0.5, 0, 0.4, 0) -- スマホは少し上
+    else
+        frame.Position = UDim2.new(0.5, 0, 0.5, 0) -- PCは真ん中
+    end
+
     local corner = Instance.new("UICorner", frame)
-    corner.CornerRadius = UDim.new(1,0)
+    corner.CornerRadius = UDim.new(1, 0)
 
     local stroke = Instance.new("UIStroke", frame)
     stroke.Thickness = thickness or 3
-    stroke.Color = Color3.fromRGB(255,255,255)
+    stroke.Color = Color3.fromRGB(255, 255, 255)
 
     return frame
 end
@@ -294,29 +296,29 @@ end
 makeToggle("中央に虹色の丸い円", function()
     circleEnabled = not circleEnabled
     if circleEnabled then
-        createCircle(120, 4) -- 直径120px 太さ4px
+        createCircle(120, 4)
     else
         for _,v in ipairs(circleFolder:GetChildren()) do v:Destroy() end
     end
 end)
 
--- 敵チェックと連動して虹色回転
+-- RenderSteppedで虹色＆呼吸アニメ
 RunService.RenderStepped:Connect(function()
     if circleEnabled then
-        local hue = (tick() * 0.2) % 1 -- 時間で色相を回転
+        local hue = (tick() * 0.2) % 1
         local rainbowColor = hsvToRgb(hue, 1, 1)
 
         for _,circle in ipairs(circleFolder:GetChildren()) do
             local stroke = circle:FindFirstChildOfClass("UIStroke")
             if stroke then stroke.Color = rainbowColor end
 
-            -- 呼吸アニメーション（ふわっと拡縮）
-            local scale = 1 + 0.05*math.sin(tick()*2)
-            circle.Size = UDim2.new(0,120*scale,0,120*scale)
+            -- 呼吸アニメ
+            local scale = 1 + 0.05 * math.sin(tick() * 2)
+            circle.Size = UDim2.new(0, 120 * scale, 0, 120 * scale)
 
-            -- 毎フレーム位置補正
+            -- 位置補正
             if isMobile then
-                circle.Position = UDim2.new(0.5, 0, 0.4, 0) -- さらに上
+                circle.Position = UDim2.new(0.5, 0, 0.4, 0)
             else
                 circle.Position = UDim2.new(0.5, 0, 0.5, 0)
             end
