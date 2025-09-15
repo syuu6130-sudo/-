@@ -250,80 +250,67 @@ print(name..","..count)
 end
 end)
 
--- ======= 装飾用の丸い円 =======
-local circlesEnabled = false
-local followMouse = false
-local circlesFolder = Instance.new("Folder", screen)
-circlesFolder.Name = "DecorativeCircles"
+-- ======= 装飾用の丸い円（中央固定・1個だけ） =======
+local circleEnabled = false
+local circleFolder = Instance.new("Folder", screen)
+circleFolder.Name = "DecorativeCircle"
 
--- 円を作るヘルパー
-local function createRing(parent, diameter, thickness, color, pos)
+-- 円を作る関数
+local function createCircle(diameter, thickness, color)
+    -- 古いの削除
+    for _,v in ipairs(circleFolder:GetChildren()) do v:Destroy() end
+
     local frame = Instance.new("Frame")
     frame.Size = UDim2.new(0, diameter, 0, diameter)
     frame.AnchorPoint = Vector2.new(0.5,0.5)
-    frame.Position = pos or UDim2.new(0.5, 0, 0.5, 0)
+    frame.Position = UDim2.new(0.5, 0, 0.5, 0) -- 📱も💻も中央
     frame.BackgroundTransparency = 1
-    frame.Parent = parent
+    frame.Parent = circleFolder
 
     local corner = Instance.new("UICorner", frame)
-    corner.CornerRadius = UDim.new(1, 0)
+    corner.CornerRadius = UDim.new(1,0)
 
     local stroke = Instance.new("UIStroke", frame)
-    stroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
-    stroke.LineJoinMode = Enum.LineJoinMode.Round
     stroke.Thickness = thickness or 4
-    stroke.Transparency = 0
     stroke.Color = color or Color3.fromRGB(255,100,100)
 
     return frame
 end
 
-local function spawnCircles(count)
-    -- 既存のを消す
-    for _,v in ipairs(circlesFolder:GetChildren()) do v:Destroy() end
-
-    local baseDiameter = 80
-    local gap = 30
-    for i=1,count do
-        local dia = baseDiameter + (i-1)*gap
-        local ring = createRing(circlesFolder, dia, 4, Color3.fromHSV((i/count),1,1))
-        -- 簡単な脈動アニメ
-        spawn(function()
-            local t0 = tick()
-            while ring.Parent do
-                local scale = 1 + 0.05*math.sin((tick()-t0)*2)
-                ring.Size = UDim2.new(0, dia*scale, 0, dia*scale)
-                wait(1/60)
-            end
-        end)
-    end
-end
-
 -- トグル追加
-makeToggle("丸い円を表示", function()
-    circlesEnabled = not circlesEnabled
-    if circlesEnabled then
-        spawnCircles(5)
+makeToggle("中央に丸い円", function()
+    circleEnabled = not circleEnabled
+    if circleEnabled then
+        createCircle(100, 4, Color3.fromRGB(255,100,100))
     else
-        for _,v in ipairs(circlesFolder:GetChildren()) do v:Destroy() end
+        for _,v in ipairs(circleFolder:GetChildren()) do v:Destroy() end
     end
 end)
 
-makeToggle("丸い円マウス追従", function()
-    followMouse = not followMouse
-end)
-
+-- 壁チェック＆チームチェックが動くたびに軽いアニメ
 RunService.RenderStepped:Connect(function()
-    if circlesEnabled then
-        local pos
-        if followMouse then
-            local m = UserInputService:GetMouseLocation()
-            pos = UDim2.new(0, m.X, 0, m.Y)
+    if circleEnabled then
+        local target = getClosestEnemy()
+        local color
+        if target and target.Parent then
+            local plr = Players:GetPlayerFromCharacter(target.Parent)
+            if plr and isEnemy(plr) and isVisible(target.HumanoidRootPart) then
+                color = Color3.fromRGB(255,0,0) -- 敵が見えてる → 赤
+            else
+                color = Color3.fromRGB(0,255,0) -- 味方 or 壁越し → 緑
+            end
         else
-            pos = UDim2.new(0.5, 0, 0.5, 0)
+            color = Color3.fromRGB(255,100,100) -- デフォルト
         end
-        for _,ring in ipairs(circlesFolder:GetChildren()) do
-            ring.Position = pos
+
+        for _,circle in ipairs(circleFolder:GetChildren()) do
+            -- 色変更
+            local stroke = circle:FindFirstChildOfClass("UIStroke")
+            if stroke then stroke.Color = color end
+
+            -- 簡単な呼吸アニメ
+            local scale = 1 + 0.05*math.sin(tick()*2)
+            circle.Size = UDim2.new(0,100*scale,0,100*scale)
         end
     end
 end)
