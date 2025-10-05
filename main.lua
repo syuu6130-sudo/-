@@ -1,4 +1,4 @@
---// 暗殺者対保安官2 統合メニュー 完全版 //--
+--// 暗殺者対保安官2 統合メニュー 完全版 + 修正版RapidFire //--
 -- 作者: @syu_0316 + RapidFire統合 + 完全GUI統合 --
 
 local Players = game:GetService("Players")
@@ -19,7 +19,7 @@ local rapidFireEnabled = false
 
 local softAimStrength = 3
 local flySpeed = 3
-local fireInterval = 0.1 -- 連射速度
+local fireInterval = 0.1 -- 連射速度（秒）
 
 local lockLog = {}
 local currentLockTarget = nil
@@ -80,7 +80,9 @@ local function updateESP()
 end
 
 -- ========== SoftAim / AutoAim / AutoLock / RapidFire ==========
-RunService.RenderStepped:Connect(function()
+local lastFire = 0 -- 連射タイマー
+
+RunService.RenderStepped:Connect(function(dt)
     local target = getClosestEnemy()
 
     if target then
@@ -111,14 +113,21 @@ RunService.RenderStepped:Connect(function()
         updateESP()
     end
 
+    -- ===== RapidFire処理 =====
     if rapidFireEnabled then
-        local char = player.Character
-        if char then
-            local tool = char:FindFirstChildWhichIsA("Tool")
-            if tool then
-                tool:Activate()
+        lastFire = lastFire + dt
+        if lastFire >= fireInterval then
+            lastFire = 0
+            local char = player.Character
+            if char then
+                local tool = char:FindFirstChildWhichIsA("Tool")
+                if tool then
+                    tool:Activate()
+                end
             end
         end
+    else
+        lastFire = fireInterval -- 無効時はリセット
     end
 end)
 
