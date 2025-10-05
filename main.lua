@@ -264,12 +264,20 @@ makeToggle("AutoAim", function() autoAimEnabled = not autoAimEnabled end)
 makeToggle("AutoLock", function() autoLockEnabled = not autoLockEnabled end)
 makeToggle("ESP", function() espEnabled = not espEnabled end)
 makeToggle("Fly", function() flyEnabled = not flyEnabled end)
+
+-- CSV出力
 makeToggle("CSV出力", function()
-print("=== ロックログ ===")
-for name,count in pairs(lockLog) do
-print(name..","..count)
-end
+    print("=== ロックログ ===")
+    for name,count in pairs(lockLog) do
+        print(name..","..count)
+    end
 end)
+
+-- 連射トグル（CSV出力とは別）
+makeToggle("連射(RapidFire)", function()
+    rapidFireEnabled = not rapidFireEnabled
+end)
+
 
 -- ======= 装飾用の丸い円（直径2倍・Executer対応・スマホ補正・虹色アニメ） =======
 local circleEnabled = false
