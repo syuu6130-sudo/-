@@ -42,8 +42,14 @@ return (not hit or hit:IsDescendantOf(target.Parent))
 end
 
 local function isEnemy(plr)
-return plr.Team ~= player.Team
+    -- チームが存在しない（FFA）の場合は全員敵扱い
+    if not player.Team or not plr.Team then
+        return true
+    end
+    -- チーム制なら、チームが違う相手だけ敵
+    return plr.Team ~= player.Team
 end
+
 
 -- ========== 最も近い敵を取得 ==========
 local function getClosestEnemy()
