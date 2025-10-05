@@ -54,22 +54,32 @@ end
 -- ========== 最も近い敵を取得 ==========
 local function getClosestEnemy()
     local closest, dist = nil, math.huge
+    local camCF = Camera.CFrame
+    local camDir = camCF.LookVector
+    local maxAngle = math.rad(60) -- 視界内左右60°
+
     for _, p in ipairs(Players:GetPlayers()) do
         if p ~= player and isEnemy(p) and p.Character then
             local hrp = p.Character:FindFirstChild("HumanoidRootPart")
             local humanoid = p.Character:FindFirstChildOfClass("Humanoid")
-            -- 敵が生きているかをチェック
             if hrp and humanoid and humanoid.Health > 0 then
-                local mag = (hrp.Position - Camera.CFrame.Position).Magnitude
-                if mag < dist and isVisible(hrp) then
-                    closest = p.Character
-                    dist = mag
+                local dir = (hrp.Position - camCF.Position).Unit
+                local dot = camDir:Dot(dir)
+                local angle = math.acos(math.clamp(dot, -1, 1))
+                if angle < maxAngle then
+                    local mag = (hrp.Position - camCF.Position).Magnitude
+                    if mag < dist and isVisible(hrp) then
+                        closest = p.Character
+                        dist = mag
+                    end
                 end
             end
         end
     end
+
     return closest
 end
+
 
 
 -- ========== ESP ==========
