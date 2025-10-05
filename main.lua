@@ -53,19 +53,24 @@ end
 
 -- ========== 最も近い敵を取得 ==========
 local function getClosestEnemy()
-local closest, dist = nil, math.huge
-for _,p in ipairs(Players:GetPlayers()) do
-if p ~= player and isEnemy(p) and p.Character and p.Character:FindFirstChild("HumanoidRootPart") then
-local hrp = p.Character.HumanoidRootPart
-local mag = (hrp.Position - Camera.CFrame.Position).Magnitude
-if mag < dist and isVisible(hrp) then
-closest = p.Character
-dist = mag
+    local closest, dist = nil, math.huge
+    for _, p in ipairs(Players:GetPlayers()) do
+        if p ~= player and isEnemy(p) and p.Character then
+            local hrp = p.Character:FindFirstChild("HumanoidRootPart")
+            local humanoid = p.Character:FindFirstChildOfClass("Humanoid")
+            -- 敵が生きているかをチェック
+            if hrp and humanoid and humanoid.Health > 0 then
+                local mag = (hrp.Position - Camera.CFrame.Position).Magnitude
+                if mag < dist and isVisible(hrp) then
+                    closest = p.Character
+                    dist = mag
+                end
+            end
+        end
+    end
+    return closest
 end
-end
-end
-return closest
-end
+
 
 -- ========== ESP ==========
 local function createESP(char, color)
