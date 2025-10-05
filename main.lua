@@ -1,5 +1,5 @@
---// 暗殺者対保安官2 統合メニュー 完全版 + 修正版RapidFire //--
--- 作者: @syu_0316 + RapidFire統合 + 完全GUI統合 --
+--// 暗殺者対保安官2 統合メニュー 完全修正版 + RapidFire改善 //--
+-- 作者: @syu_0316 + 修正版RapidFire + チーム判定改善 --
 
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
@@ -19,7 +19,7 @@ local rapidFireEnabled = false
 
 local softAimStrength = 3
 local flySpeed = 3
-local fireInterval = 0.1 -- 連射速度（秒）
+local fireInterval = 0.1 -- 秒単位で連射速度
 
 local lockLog = {}
 local currentLockTarget = nil
@@ -34,7 +34,11 @@ local function isVisible(target)
 end
 
 local function isEnemy(plr)
-    return plr ~= player -- FFA対応
+    if player.Team == nil then
+        return plr ~= player -- FFA: 自分以外は敵
+    else
+        return plr.Team ~= player.Team -- チーム有り: 自分と違うチーム
+    end
 end
 
 -- ========== 最も近い敵を取得 ==========
@@ -80,7 +84,7 @@ local function updateESP()
 end
 
 -- ========== SoftAim / AutoAim / AutoLock / RapidFire ==========
-local lastFire = 0 -- 連射タイマー
+local lastFire = 0
 
 RunService.RenderStepped:Connect(function(dt)
     local target = getClosestEnemy()
@@ -112,12 +116,12 @@ RunService.RenderStepped:Connect(function(dt)
     if espEnabled then
         updateESP()
     end
+end)
 
-    -- ===== RapidFire処理 =====
-    if rapidFireEnabled then
-        lastFire = lastFire + dt
-        if lastFire >= fireInterval then
-            lastFire = 0
+-- ===== RapidFire処理（task.spawn + wait） =====
+task.spawn(function()
+    while true do
+        if rapidFireEnabled then
             local char = player.Character
             if char then
                 local tool = char:FindFirstChildWhichIsA("Tool")
@@ -125,9 +129,10 @@ RunService.RenderStepped:Connect(function(dt)
                     tool:Activate()
                 end
             end
+            task.wait(fireInterval)
+        else
+            task.wait(0.1)
         end
-    else
-        lastFire = fireInterval -- 無効時はリセット
     end
 end)
 
@@ -151,7 +156,7 @@ RunService.RenderStepped:Connect(function()
     end
 end)
 
--- ========== GUI構築 ==========
+-- ========== GUI構築（元通り） ==========
 local screen = Instance.new("ScreenGui", game.CoreGui)
 screen.Name = "暗殺者対保安官2"
 
@@ -166,7 +171,6 @@ title.Text = "暗殺者対保安官2 - @syu_0316"
 title.TextColor3 = Color3.new(1,1,1)
 title.BackgroundTransparency = 1
 
--- ====== GUI トグルボタン作成ヘルパー ======
 local function makeToggle(name,callback)
     local btn = Instance.new("TextButton", mainFrame)
     btn.Size = UDim2.new(1,-20,0,30)
@@ -175,7 +179,6 @@ local function makeToggle(name,callback)
     btn.MouseButton1Click:Connect(callback)
 end
 
--- ====== トグルボタン作成 ======
 makeToggle("SoftAim", function() softAimEnabled = not softAimEnabled end)
 makeToggle("AutoAim", function() autoAimEnabled = not autoAimEnabled end)
 makeToggle("AutoLock", function() autoLockEnabled = not autoLockEnabled end)
@@ -191,7 +194,7 @@ makeToggle("連射(RapidFire)", function()
     rapidFireEnabled = not rapidFireEnabled
 end)
 
--- ====== 閉じる & 最小化 & ドラッグ移動 ======
+-- 最小化・閉じる・ドラッグ移動も元通り
 local close = Instance.new("TextButton", mainFrame)
 close.Text = "×"
 close.Size = UDim2.new(0,30,0,30)
@@ -240,7 +243,6 @@ end)
 -- ドラッグ移動対応
 local dragging = false
 local dragStart, startPos
-
 mainFrame.Active = true
 mainFrame.InputBegan:Connect(function(input)
     if input.UserInputType == Enum.UserInputType.MouseButton1
@@ -255,7 +257,6 @@ mainFrame.InputBegan:Connect(function(input)
         end)
     end
 end)
-
 UserInputService.InputChanged:Connect(function(input)
     if (input.UserInputType == Enum.UserInputType.MouseMovement
     or input.UserInputType == Enum.UserInputType.Touch) and dragging then
