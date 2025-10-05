@@ -1,5 +1,5 @@
 --// 暗殺者対保安官2 統合メニュー 完全版 //--
--- 作者: @syu_0316 + RapidFire統合 --
+-- 作者: @syu_0316 + RapidFire統合 + 完全GUI統合 --
 
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
@@ -15,24 +15,14 @@ local autoAimEnabled = false
 local autoLockEnabled = false
 local espEnabled = false
 local flyEnabled = false
-local rapidFireEnabled = false -- 追加
+local rapidFireEnabled = false
 
 local softAimStrength = 3
 local flySpeed = 3
-local fireInterval = 0.1 -- 連射速度調整
+local fireInterval = 0.1 -- 連射速度
 
 local lockLog = {}
 local currentLockTarget = nil
-
--- ========== ヒットボックス拡張 ==========
-local function expandHitbox(char)
-    if char and char:FindFirstChild("HumanoidRootPart") then
-        char.HumanoidRootPart.Size = Vector3.new(5,5,5)
-        char.HumanoidRootPart.Transparency = 0.7
-        char.HumanoidRootPart.BrickColor = BrickColor.new("Bright red")
-        char.HumanoidRootPart.Material = Enum.Material.Neon
-    end
-end
 
 -- ========== チームチェック & 壁判定 / FFA対応 ==========
 local function isVisible(target)
@@ -44,8 +34,7 @@ local function isVisible(target)
 end
 
 local function isEnemy(plr)
-    -- FFA対応: 全員敵扱い
-    return plr ~= player
+    return plr ~= player -- FFA対応
 end
 
 -- ========== 最も近い敵を取得 ==========
@@ -97,17 +86,13 @@ RunService.RenderStepped:Connect(function()
     if target then
         local humanoid = target:FindFirstChildOfClass("Humanoid")
         if humanoid and humanoid.Health > 0 then
-            -- SoftAim
             if softAimEnabled then
                 local aimPos = target.HumanoidRootPart.Position
-                local newCF = Camera.CFrame:Lerp(CFrame.new(Camera.CFrame.Position, aimPos), softAimStrength*0.1)
-                Camera.CFrame = newCF
+                Camera.CFrame = Camera.CFrame:Lerp(CFrame.new(Camera.CFrame.Position, aimPos), softAimStrength*0.1)
             end
-            -- AutoAim
             if autoAimEnabled then
                 Camera.CFrame = CFrame.new(Camera.CFrame.Position, target.HumanoidRootPart.Position)
             end
-            -- AutoLock
             if autoLockEnabled then
                 currentLockTarget = target
                 if target.Parent and target.Parent:FindFirstChildWhichIsA("Tool") then
@@ -122,12 +107,10 @@ RunService.RenderStepped:Connect(function()
         currentLockTarget = nil
     end
 
-    -- ESP
     if espEnabled then
         updateESP()
     end
 
-    -- RapidFire
     if rapidFireEnabled then
         local char = player.Character
         if char then
@@ -174,7 +157,7 @@ title.Text = "暗殺者対保安官2 - @syu_0316"
 title.TextColor3 = Color3.new(1,1,1)
 title.BackgroundTransparency = 1
 
--- GUIトグルボタン
+-- ====== GUI トグルボタン作成ヘルパー ======
 local function makeToggle(name,callback)
     local btn = Instance.new("TextButton", mainFrame)
     btn.Size = UDim2.new(1,-20,0,30)
@@ -197,4 +180,80 @@ makeToggle("CSV出力", function()
 end)
 makeToggle("連射(RapidFire)", function()
     rapidFireEnabled = not rapidFireEnabled
+end)
+
+-- ====== 閉じる & 最小化 & ドラッグ移動 ======
+local close = Instance.new("TextButton", mainFrame)
+close.Text = "×"
+close.Size = UDim2.new(0,30,0,30)
+close.Position = UDim2.new(1,-35,0,5)
+close.MouseButton1Click:Connect(function()
+    local confirm = Instance.new("Frame", screen)
+    confirm.Size = UDim2.new(0,200,0,100)
+    confirm.Position = UDim2.new(0.4,0,0.4,0)
+    confirm.BackgroundColor3 = Color3.fromRGB(40,40,40)
+
+    local lbl = Instance.new("TextLabel", confirm)
+    lbl.Size = UDim2.new(1,0,0.5,0)
+    lbl.Text = "本当に閉じますか？"
+    lbl.TextColor3 = Color3.new(1,1,1)
+    lbl.BackgroundTransparency = 1
+
+    local yes = Instance.new("TextButton", confirm)
+    yes.Size = UDim2.new(0.5,0,0.5,0)
+    yes.Position = UDim2.new(0,0,0.5,0)
+    yes.Text = "はい"
+    yes.MouseButton1Click:Connect(function() screen:Destroy() end)
+
+    local no = Instance.new("TextButton", confirm)
+    no.Size = UDim2.new(0.5,0,0.5,0)
+    no.Position = UDim2.new(0.5,0,0.5,0)
+    no.Text = "いいえ"
+    no.MouseButton1Click:Connect(function() confirm:Destroy() end)
+end)
+
+local minimize = Instance.new("TextButton", mainFrame)
+minimize.Text = "-"
+minimize.Size = UDim2.new(0,30,0,30)
+minimize.Position = UDim2.new(1,-70,0,5)
+minimize.MouseButton1Click:Connect(function()
+    mainFrame.Visible = false
+    local mini = Instance.new("TextButton", screen)
+    mini.Size = UDim2.new(0,50,0,30)
+    mini.Position = UDim2.new(0.5,-25,0,10)
+    mini.Text = "開く"
+    mini.MouseButton1Click:Connect(function()
+        mainFrame.Visible = true
+        mini:Destroy()
+    end)
+end)
+
+-- ドラッグ移動対応
+local dragging = false
+local dragStart, startPos
+
+mainFrame.Active = true
+mainFrame.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1
+    or input.UserInputType == Enum.UserInputType.Touch then
+        dragging = true
+        dragStart = input.Position
+        startPos = mainFrame.Position
+        input.Changed:Connect(function()
+            if input.UserInputState == Enum.UserInputState.End then
+                dragging = false
+            end
+        end)
+    end
+end)
+
+UserInputService.InputChanged:Connect(function(input)
+    if (input.UserInputType == Enum.UserInputType.MouseMovement
+    or input.UserInputType == Enum.UserInputType.Touch) and dragging then
+        local delta = input.Position - dragStart
+        mainFrame.Position = UDim2.new(
+            startPos.X.Scale, startPos.X.Offset + delta.X,
+            startPos.Y.Scale, startPos.Y.Offset + delta.Y
+        )
+    end
 end)
