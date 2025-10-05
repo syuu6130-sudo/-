@@ -1,5 +1,5 @@
---// 暗殺者対保安官2 統合メニュー 完全修正版 + RapidFire改善 //--
--- 作者: @syu_0316 + 修正版RapidFire + チーム判定改善 --
+--// 暗殺者対保安官2 統合メニュー 完全版 //--
+-- 作者: @syu_0316 (統合版 by ChatGPT)
 
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
@@ -19,12 +19,22 @@ local rapidFireEnabled = false
 
 local softAimStrength = 3
 local flySpeed = 3
-local fireInterval = 0.1 -- 秒単位で連射速度
+local fireInterval = 0.18 -- RapidFire安定用
 
 local lockLog = {}
 local currentLockTarget = nil
 
--- ========== チームチェック & 壁判定 / FFA対応 ==========
+-- ========== ヒットボックス拡張 ==========
+local function expandHitbox(char)
+    if char and char:FindFirstChild("HumanoidRootPart") then
+        char.HumanoidRootPart.Size = Vector3.new(5,5,5)
+        char.HumanoidRootPart.Transparency = 0.7
+        char.HumanoidRootPart.BrickColor = BrickColor.new("Bright red")
+        char.HumanoidRootPart.Material = Enum.Material.Neon
+    end
+end
+
+-- ========== チーム/死亡チェック & 壁判定 ==========
 local function isVisible(target)
     local origin = Camera.CFrame.Position
     local direction = (target.Position - origin)
@@ -34,23 +44,23 @@ local function isVisible(target)
 end
 
 local function isEnemy(plr)
-    if player.Team == nil then
-        return plr ~= player -- FFA: 自分以外は敵
-    else
-        return plr.Team ~= player.Team -- チーム有り: 自分と違うチーム
-    end
+    return plr ~= player -- FFA対応：全員が敵
+end
+
+local function isAlive(char)
+    local humanoid = char:FindFirstChildOfClass("Humanoid")
+    return humanoid and humanoid.Health > 0
 end
 
 -- ========== 最も近い敵を取得 ==========
 local function getClosestEnemy()
     local closest, dist = nil, math.huge
-    for _,p in ipairs(Players:GetPlayers()) do
-        if isEnemy(p) and p.Character then
+    for _, p in ipairs(Players:GetPlayers()) do
+        if p ~= player and p.Character and isAlive(p.Character) then
             local hrp = p.Character:FindFirstChild("HumanoidRootPart")
-            local humanoid = p.Character:FindFirstChildOfClass("Humanoid")
-            if hrp and humanoid and humanoid.Health > 0 then
+            if hrp and isVisible(hrp) then
                 local mag = (hrp.Position - Camera.CFrame.Position).Magnitude
-                if mag < dist and isVisible(hrp) then
+                if mag < dist then
                     closest = p.Character
                     dist = mag
                 end
@@ -63,6 +73,7 @@ end
 -- ========== ESP ==========
 local function createESP(char, color)
     if not char:FindFirstChild("HumanoidRootPart") then return end
+    if char:FindFirstChild("ESPHighlight") then return end
     local highlight = Instance.new("Highlight")
     highlight.Name = "ESPHighlight"
     highlight.FillColor = color
@@ -73,28 +84,23 @@ local function createESP(char, color)
 end
 
 local function updateESP()
-    for _,p in ipairs(Players:GetPlayers()) do
-        if p ~= player and p.Character and p.Character:FindFirstChild("HumanoidRootPart") then
-            if not p.Character:FindFirstChild("ESPHighlight") then
-                local c = Color3.new(1,0,0)
-                createESP(p.Character,c)
-            end
+    for _, p in ipairs(Players:GetPlayers()) do
+        if p.Character and isAlive(p.Character) then
+            local color = isEnemy(p) and Color3.new(1,0,0) or Color3.new(0,1,0)
+            createESP(p.Character, color)
         end
     end
 end
 
--- ========== SoftAim / AutoAim / AutoLock / RapidFire ==========
-local lastFire = 0
-
-RunService.RenderStepped:Connect(function(dt)
-    local target = getClosestEnemy()
-
-    if target then
-        local humanoid = target:FindFirstChildOfClass("Humanoid")
-        if humanoid and humanoid.Health > 0 then
+-- ========== SoftAim / AutoAim / AutoLock ==========
+RunService.RenderStepped:Connect(function()
+    if softAimEnabled or autoAimEnabled or autoLockEnabled then
+        local target = getClosestEnemy()
+        if target and target:FindFirstChild("HumanoidRootPart") then
             if softAimEnabled then
                 local aimPos = target.HumanoidRootPart.Position
-                Camera.CFrame = Camera.CFrame:Lerp(CFrame.new(Camera.CFrame.Position, aimPos), softAimStrength*0.1)
+                local newCF = Camera.CFrame:Lerp(CFrame.new(Camera.CFrame.Position, aimPos), softAimStrength*0.1)
+                Camera.CFrame = newCF
             end
             if autoAimEnabled then
                 Camera.CFrame = CFrame.new(Camera.CFrame.Position, target.HumanoidRootPart.Position)
@@ -106,33 +112,10 @@ RunService.RenderStepped:Connect(function(dt)
                 end
                 lockLog[target.Name] = (lockLog[target.Name] or 0) + 1
             end
-        else
-            currentLockTarget = nil
         end
-    else
-        currentLockTarget = nil
     end
-
     if espEnabled then
         updateESP()
-    end
-end)
-
--- ===== RapidFire処理（task.spawn + wait） =====
-task.spawn(function()
-    while true do
-        if rapidFireEnabled then
-            local char = player.Character
-            if char then
-                local tool = char:FindFirstChildWhichIsA("Tool")
-                if tool then
-                    tool:Activate()
-                end
-            end
-            task.wait(fireInterval)
-        else
-            task.wait(0.1)
-        end
     end
 end)
 
@@ -156,7 +139,7 @@ RunService.RenderStepped:Connect(function()
     end
 end)
 
--- ========== GUI構築（元通り） ==========
+-- ========== GUI構築 ==========
 local screen = Instance.new("ScreenGui", game.CoreGui)
 screen.Name = "暗殺者対保安官2"
 
@@ -171,30 +154,7 @@ title.Text = "暗殺者対保安官2 - @syu_0316"
 title.TextColor3 = Color3.new(1,1,1)
 title.BackgroundTransparency = 1
 
-local function makeToggle(name,callback)
-    local btn = Instance.new("TextButton", mainFrame)
-    btn.Size = UDim2.new(1,-20,0,30)
-    btn.Position = UDim2.new(0,10,0,#mainFrame:GetChildren()*35)
-    btn.Text = name
-    btn.MouseButton1Click:Connect(callback)
-end
-
-makeToggle("SoftAim", function() softAimEnabled = not softAimEnabled end)
-makeToggle("AutoAim", function() autoAimEnabled = not autoAimEnabled end)
-makeToggle("AutoLock", function() autoLockEnabled = not autoLockEnabled end)
-makeToggle("ESP", function() espEnabled = not espEnabled end)
-makeToggle("Fly", function() flyEnabled = not flyEnabled end)
-makeToggle("CSV出力", function()
-    print("=== ロックログ ===")
-    for name,count in pairs(lockLog) do
-        print(name..","..count)
-    end
-end)
-makeToggle("連射(RapidFire)", function()
-    rapidFireEnabled = not rapidFireEnabled
-end)
-
--- 最小化・閉じる・ドラッグ移動も元通り
+-- 最小化 / 閉じるボタン
 local close = Instance.new("TextButton", mainFrame)
 close.Text = "×"
 close.Size = UDim2.new(0,30,0,30)
@@ -204,19 +164,16 @@ close.MouseButton1Click:Connect(function()
     confirm.Size = UDim2.new(0,200,0,100)
     confirm.Position = UDim2.new(0.4,0,0.4,0)
     confirm.BackgroundColor3 = Color3.fromRGB(40,40,40)
-
     local lbl = Instance.new("TextLabel", confirm)
     lbl.Size = UDim2.new(1,0,0.5,0)
     lbl.Text = "本当に閉じますか？"
     lbl.TextColor3 = Color3.new(1,1,1)
     lbl.BackgroundTransparency = 1
-
     local yes = Instance.new("TextButton", confirm)
     yes.Size = UDim2.new(0.5,0,0.5,0)
     yes.Position = UDim2.new(0,0,0.5,0)
     yes.Text = "はい"
     yes.MouseButton1Click:Connect(function() screen:Destroy() end)
-
     local no = Instance.new("TextButton", confirm)
     no.Size = UDim2.new(0.5,0,0.5,0)
     no.Position = UDim2.new(0.5,0,0.5,0)
@@ -240,7 +197,7 @@ minimize.MouseButton1Click:Connect(function()
     end)
 end)
 
--- ドラッグ移動対応
+-- ドラッグ可能
 local dragging = false
 local dragStart, startPos
 mainFrame.Active = true
@@ -265,5 +222,47 @@ UserInputService.InputChanged:Connect(function(input)
             startPos.X.Scale, startPos.X.Offset + delta.X,
             startPos.Y.Scale, startPos.Y.Offset + delta.Y
         )
+    end
+end)
+
+-- ========== GUIトグルボタン ==========
+local function makeToggle(name, callback)
+    local btn = Instance.new("TextButton", mainFrame)
+    btn.Size = UDim2.new(1,-20,0,30)
+    btn.Position = UDim2.new(0,10,0,#mainFrame:GetChildren()*35)
+    btn.Text = name
+    btn.MouseButton1Click:Connect(callback)
+end
+
+makeToggle("SoftAim", function() softAimEnabled = not softAimEnabled end)
+makeToggle("AutoAim", function() autoAimEnabled = not autoAimEnabled end)
+makeToggle("AutoLock", function() autoLockEnabled = not autoLockEnabled end)
+makeToggle("ESP", function() espEnabled = not espEnabled end)
+makeToggle("Fly", function() flyEnabled = not flyEnabled end)
+makeToggle("CSV出力", function()
+    print("=== ロックログ ===")
+    for name,count in pairs(lockLog) do
+        print(name..","..count)
+    end
+end)
+makeToggle("連射(RapidFire)", function()
+    rapidFireEnabled = not rapidFireEnabled
+end)
+
+-- ========== RapidFireループ ==========
+task.spawn(function()
+    while true do
+        if rapidFireEnabled then
+            local char = player.Character
+            if char then
+                local tool = char:FindFirstChildWhichIsA("Tool")
+                if tool then
+                    tool:Activate()
+                end
+            end
+            task.wait(fireInterval)
+        else
+            task.wait(0.1)
+        end
     end
 end)
