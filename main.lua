@@ -216,44 +216,110 @@ local function getEnemyInCircle()
             if hrp and humanoid and humanoid.Health > 0 then
                 local screenPos, onScreen = Camera:WorldToViewportPoint(hrp.Position)
                 if onScreen and isInMagicCircle(Vector2.new(screenPos.X, screenPos.Y)) then
-                    return p.Character, hrp
+                    return p.Character, hrp, humanoid
                 end
             end
         end
     end
-    return nil, nil
+    return nil, nil, nil
 end
 
--- 常に監視して自動で倒す
-RunService.RenderStepped:Connect(function()
-    if magicCircleEnabled and circleEnabled then
-        local enemyChar, enemyHrp = getEnemyInCircle()
-        if enemyChar and enemyHrp then
-            -- 複数の方法で確実に倒す
-            local humanoid = enemyChar:FindFirstChildOfClass("Humanoid")
-            if humanoid then
-                -- 方法1: Healthを0に
-                humanoid.Health = 0
-                
-                -- 方法2: Breakjointsで確実に
-                enemyChar:BreakJoints()
-                
-                -- 方法3: HumanoidRootPartを削除
-                if enemyHrp then
-                    enemyHrp:Destroy()
-                end
-                
-                -- 通知
-                Rayfield:Notify({
-                    Title = "必中成功！",
-                    Content = enemyChar.Name .. "を倒しました",
-                    Duration = 1.5,
-                    Image = 4483362458,
-                })
-                
-                wait(0.1) -- 少し待機して連続発動を防ぐ
+-- ゲームの武器システムを探す
+local function findWeaponRemotes()
+    local remotes = {}
+    
+    -- ReplicatedStorageから探す
+    for _, obj in ipairs(game:GetService("ReplicatedStorage"):GetDescendants()) do
+        if obj:IsA("RemoteEvent") or obj:IsA("RemoteFunction") then
+            local name = obj.Name:lower()
+            if name:match("damage") or name:match("hit") or name:match("shoot") or 
+               name:match("fire") or name:match("attack") or name:match("kill") then
+                table.insert(remotes, obj)
             end
         end
+    end
+    
+    return remotes
+end
+
+local weaponRemotes = findWeaponRemotes()
+local lastKillTime = 0
+
+-- 武器を使って確実にダメージを与える
+local function damageEnemyInCircle()
+    if tick() - lastKillTime < 0.5 then return end -- クールダウン
+    
+    local enemyChar, enemyHrp, enemyHumanoid = getEnemyInCircle()
+    if not enemyChar then return end
+    
+    local tool = player.Character:FindFirstChildOfClass("Tool")
+    if not tool then 
+        -- 武器を持っていない場合はインベントリから装備
+        for _, item in ipairs(player.Backpack:GetChildren()) do
+            if item:IsA("Tool") then
+                player.Character.Humanoid:EquipTool(item)
+                tool = item
+                wait(0.1)
+                break
+            end
+        end
+    end
+    
+    if tool then
+        -- 方法1: ツールのActivateを使用
+        tool:Activate()
+        
+        -- 方法2: RemoteEventを探して直接呼び出し
+        for _, remote in ipairs(tool:GetDescendants()) do
+            if remote:IsA("RemoteEvent") then
+                pcall(function()
+                    remote:FireServer(enemyHumanoid, enemyHrp, enemyChar)
+                end)
+            elseif remote:IsA("RemoteFunction") then
+                pcall(function()
+                    remote:InvokeServer(enemyHumanoid, enemyHrp, enemyChar)
+                end)
+            end
+        end
+        
+        -- 方法3: ReplicatedStorageのRemoteを使用
+        for _, remote in ipairs(weaponRemotes) do
+            pcall(function()
+                if remote:IsA("RemoteEvent") then
+                    remote:FireServer({
+                        Hit = enemyHrp,
+                        Target = enemyChar,
+                        Humanoid = enemyHumanoid,
+                        Position = enemyHrp.Position,
+                        Damage = 100
+                    })
+                elseif remote:IsA("RemoteFunction") then
+                    remote:InvokeServer({
+                        Hit = enemyHrp,
+                        Target = enemyChar,
+                        Humanoid = enemyHumanoid,
+                        Position = enemyHrp.Position,
+                        Damage = 100
+                    })
+                end
+            end)
+        end
+        
+        lastKillTime = tick()
+        
+        Rayfield:Notify({
+            Title = "必中攻撃！",
+            Content = enemyChar.Name .. "を攻撃しました",
+            Duration = 1.5,
+            Image = 4483362458,
+        })
+    end
+end
+
+-- 常に監視して自動攻撃
+RunService.RenderStepped:Connect(function()
+    if magicCircleEnabled and circleEnabled then
+        damageEnemyInCircle()
     end
 end)
 
