@@ -1,4 +1,4 @@
---// Rayfield統合版 - 暗殺者対保安官2 //--
+--// Rayfield統合版 - 暗殺者対保安官2 (超精密オートエイム) //--
 -- 作者: @syu_u0316 --
 
 local Rayfield = loadstring(game:HttpGet('https://sirius.menu/rayfield'))()
@@ -14,19 +14,21 @@ local mouse = player:GetMouse()
 -- ========== 設定 ==========
 local softAimEnabled = false
 local autoAimEnabled = false
-local autoLockEnabled = false
+local autoShootEnabled = false
 local espEnabled = false
 local flyEnabled = false
 local rapidFireEnabled = false
 local circleEnabled = false
 local magicCircleEnabled = false
+local silentAimEnabled = false
 
 local softAimStrength = 0.3
 local flySpeed = 50
+local aimPart = "Head" -- Head, UpperTorso, HumanoidRootPart
 
 local lockLog = {}
 local currentLockTarget = nil
-local circleRadius = 120 -- 円の半径（直径240の半分）
+local circleRadius = 120
 
 -- ========== Rayfieldウィンドウ作成 ==========
 local Window = Rayfield:CreateWindow({
@@ -51,16 +53,6 @@ local CombatTab = Window:CreateTab("戦闘", nil)
 local VisualTab = Window:CreateTab("視覚", nil)
 local MovementTab = Window:CreateTab("移動", nil)
 local UtilityTab = Window:CreateTab("その他", nil)
-
--- ========== ヒットボックス拡張 ==========
-local function expandHitbox(char)
-    if char and char:FindFirstChild("HumanoidRootPart") then
-        char.HumanoidRootPart.Size = Vector3.new(5,5,5)
-        char.HumanoidRootPart.Transparency = 0.7
-        char.HumanoidRootPart.BrickColor = BrickColor.new("Bright red")
-        char.HumanoidRootPart.Material = Enum.Material.Neon
-    end
-end
 
 -- ========== チームチェック & 壁判定 ==========
 local function isVisible(target)
@@ -87,15 +79,15 @@ local function getClosestEnemy()
 
     for _, p in ipairs(Players:GetPlayers()) do
         if p ~= player and isEnemy(p) and p.Character then
-            local hrp = p.Character:FindFirstChild("HumanoidRootPart")
+            local targetPart = p.Character:FindFirstChild(aimPart) or p.Character:FindFirstChild("Head")
             local humanoid = p.Character:FindFirstChildOfClass("Humanoid")
-            if hrp and humanoid and humanoid.Health > 0 then
-                local dir = (hrp.Position - camCF.Position).Unit
+            if targetPart and humanoid and humanoid.Health > 0 then
+                local dir = (targetPart.Position - camCF.Position).Unit
                 local dot = camDir:Dot(dir)
                 local angle = math.acos(math.clamp(dot, -1, 1))
                 if angle < maxAngle then
-                    local mag = (hrp.Position - camCF.Position).Magnitude
-                    if mag < dist and isVisible(hrp) then
+                    local mag = (targetPart.Position - camCF.Position).Magnitude
+                    if mag < dist and isVisible(targetPart) then
                         closest = p.Character
                         dist = mag
                     end
@@ -105,6 +97,37 @@ local function getClosestEnemy()
     end
 
     return closest
+end
+
+-- ========== 円内の敵を取得 ==========
+local function isInMagicCircle(screenPos)
+    local viewportSize = Camera.ViewportSize
+    local centerX = viewportSize.X / 2
+    local centerY = viewportSize.Y / 2
+    
+    local isMobile = (UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled)
+    if isMobile then
+        centerY = viewportSize.Y * 0.4
+    end
+    
+    local distance = math.sqrt((screenPos.X - centerX)^2 + (screenPos.Y - centerY)^2)
+    return distance <= circleRadius
+end
+
+local function getEnemyInCircle()
+    for _, p in ipairs(Players:GetPlayers()) do
+        if p ~= player and isEnemy(p) and p.Character then
+            local targetPart = p.Character:FindFirstChild(aimPart) or p.Character:FindFirstChild("Head")
+            local humanoid = p.Character:FindFirstChildOfClass("Humanoid")
+            if targetPart and humanoid and humanoid.Health > 0 then
+                local screenPos, onScreen = Camera:WorldToViewportPoint(targetPart.Position)
+                if onScreen and isInMagicCircle(Vector2.new(screenPos.X, screenPos.Y)) then
+                    return p.Character, targetPart
+                end
+            end
+        end
+    end
+    return nil, nil
 end
 
 -- ========== ESP ==========
@@ -136,25 +159,117 @@ local function updateESP()
     end
 end
 
--- ========== メインループ ==========
-RunService.RenderStepped:Connect(function()
-    if softAimEnabled or autoAimEnabled or autoLockEnabled then
+-- ========== 武器検出と自動射撃 ==========
+local function getEquippedTool()
+    return player.Character and player.Character:FindFirstChildOfClass("Tool")
+end
+
+local function autoEquipWeapon()
+    if not getEquippedTool() then
+        for _, item in ipairs(player.Backpack:GetChildren()) do
+            if item:IsA("Tool") then
+                player.Character.Humanoid:EquipTool(item)
+                return item
+            end
+        end
+    end
+    return getEquippedTool()
+end
+
+local function shootWeapon()
+    local tool = getEquippedTool()
+    if tool then
+        tool:Activate()
+        -- Remote検索して発火
+        for _, v in ipairs(tool:GetDescendants()) do
+            if v:IsA("RemoteEvent") and (v.Name:lower():find("fire") or v.Name:lower():find("shoot")) then
+                pcall(function() v:FireServer() end)
+            end
+        end
+    end
+end
+
+-- ========== Silent Aim (マウス位置偽装) ==========
+local mt = getrawmetatable(game)
+local oldNamecall = mt.__namecall
+local oldIndex = mt.__index
+setreadonly(mt, false)
+
+mt.__namecall = newcclosure(function(self, ...)
+    local args = {...}
+    local method = getnamecallmethod()
+    
+    if silentAimEnabled and method == "FireServer" then
         local target = getClosestEnemy()
-        if target and target:FindFirstChild("HumanoidRootPart") then
-            if softAimEnabled then
-                local aimPos = target.HumanoidRootPart.Position
-                local newCF = Camera.CFrame:Lerp(CFrame.new(Camera.CFrame.Position, aimPos), softAimStrength)
-                Camera.CFrame = newCF
-            end
-            if autoAimEnabled then
-                Camera.CFrame = CFrame.new(Camera.CFrame.Position, target.HumanoidRootPart.Position)
-            end
-            if autoLockEnabled then
-                currentLockTarget = target
-                if target.Parent and target.Parent:FindFirstChildWhichIsA("Tool") then
-                    target.Parent:FindFirstChildWhichIsA("Tool"):Activate()
+        if target then
+            local targetPart = target:FindFirstChild(aimPart) or target:FindFirstChild("Head")
+            if targetPart then
+                -- 引数を書き換えてヘッドショットを強制
+                if typeof(args[1]) == "Vector3" then
+                    args[1] = targetPart.Position
+                elseif typeof(args[1]) == "Instance" then
+                    args[1] = targetPart
                 end
-                lockLog[target.Name] = (lockLog[target.Name] or 0) + 1
+            end
+        end
+    end
+    
+    return oldNamecall(self, unpack(args))
+end)
+
+mt.__index = newcclosure(function(self, key)
+    if silentAimEnabled and key == "Hit" then
+        local target = getClosestEnemy()
+        if target then
+            local targetPart = target:FindFirstChild(aimPart) or target:FindFirstChild("Head")
+            if targetPart then
+                return targetPart
+            end
+        end
+    end
+    return oldIndex(self, key)
+end)
+
+setreadonly(mt, true)
+
+-- ========== メインループ ==========
+local lastShootTime = 0
+local shootCooldown = 0.1
+
+RunService.RenderStepped:Connect(function()
+    -- 通常のエイム
+    if softAimEnabled or autoAimEnabled then
+        local target = getClosestEnemy()
+        if target then
+            local targetPart = target:FindFirstChild(aimPart) or target:FindFirstChild("Head")
+            if targetPart then
+                if softAimEnabled then
+                    local newCF = Camera.CFrame:Lerp(CFrame.new(Camera.CFrame.Position, targetPart.Position), softAimStrength)
+                    Camera.CFrame = newCF
+                end
+                if autoAimEnabled then
+                    Camera.CFrame = CFrame.new(Camera.CFrame.Position, targetPart.Position)
+                end
+                
+                if autoShootEnabled and tick() - lastShootTime > shootCooldown then
+                    autoEquipWeapon()
+                    shootWeapon()
+                    lastShootTime = tick()
+                end
+            end
+        end
+    end
+    
+    -- 魔法の円での自動エイム
+    if magicCircleEnabled and circleEnabled then
+        local target, targetPart = getEnemyInCircle()
+        if target and targetPart then
+            Camera.CFrame = CFrame.new(Camera.CFrame.Position, targetPart.Position)
+            
+            if tick() - lastShootTime > shootCooldown then
+                autoEquipWeapon()
+                shootWeapon()
+                lastShootTime = tick()
             end
         end
     end
@@ -191,135 +306,6 @@ RunService.RenderStepped:Connect(function()
         if UserInputService:IsKeyDown(Enum.KeyCode.Space) then moveDir = moveDir + Vector3.new(0,1,0) end
         if UserInputService:IsKeyDown(Enum.KeyCode.LeftControl) then moveDir = moveDir - Vector3.new(0,1,0) end
         bodyVel.Velocity = moveDir * flySpeed
-    end
-end)
-
--- ========== 虹色の円内で必中機能 ==========
-local function isInMagicCircle(screenPos)
-    local viewportSize = Camera.ViewportSize
-    local centerX = viewportSize.X / 2
-    local centerY = viewportSize.Y / 2
-    
-    if isMobile then
-        centerY = viewportSize.Y * 0.4
-    end
-    
-    local distance = math.sqrt((screenPos.X - centerX)^2 + (screenPos.Y - centerY)^2)
-    return distance <= circleRadius
-end
-
-local function getEnemyInCircle()
-    for _, p in ipairs(Players:GetPlayers()) do
-        if p ~= player and isEnemy(p) and p.Character then
-            local hrp = p.Character:FindFirstChild("HumanoidRootPart")
-            local humanoid = p.Character:FindFirstChildOfClass("Humanoid")
-            if hrp and humanoid and humanoid.Health > 0 then
-                local screenPos, onScreen = Camera:WorldToViewportPoint(hrp.Position)
-                if onScreen and isInMagicCircle(Vector2.new(screenPos.X, screenPos.Y)) then
-                    return p.Character, hrp, humanoid
-                end
-            end
-        end
-    end
-    return nil, nil, nil
-end
-
--- ゲームの武器システムを探す
-local function findWeaponRemotes()
-    local remotes = {}
-    
-    -- ReplicatedStorageから探す
-    for _, obj in ipairs(game:GetService("ReplicatedStorage"):GetDescendants()) do
-        if obj:IsA("RemoteEvent") or obj:IsA("RemoteFunction") then
-            local name = obj.Name:lower()
-            if name:match("damage") or name:match("hit") or name:match("shoot") or 
-               name:match("fire") or name:match("attack") or name:match("kill") then
-                table.insert(remotes, obj)
-            end
-        end
-    end
-    
-    return remotes
-end
-
-local weaponRemotes = findWeaponRemotes()
-local lastKillTime = 0
-
--- 武器を使って確実にダメージを与える
-local function damageEnemyInCircle()
-    if tick() - lastKillTime < 0.5 then return end -- クールダウン
-    
-    local enemyChar, enemyHrp, enemyHumanoid = getEnemyInCircle()
-    if not enemyChar then return end
-    
-    local tool = player.Character:FindFirstChildOfClass("Tool")
-    if not tool then 
-        -- 武器を持っていない場合はインベントリから装備
-        for _, item in ipairs(player.Backpack:GetChildren()) do
-            if item:IsA("Tool") then
-                player.Character.Humanoid:EquipTool(item)
-                tool = item
-                wait(0.1)
-                break
-            end
-        end
-    end
-    
-    if tool then
-        -- 方法1: ツールのActivateを使用
-        tool:Activate()
-        
-        -- 方法2: RemoteEventを探して直接呼び出し
-        for _, remote in ipairs(tool:GetDescendants()) do
-            if remote:IsA("RemoteEvent") then
-                pcall(function()
-                    remote:FireServer(enemyHumanoid, enemyHrp, enemyChar)
-                end)
-            elseif remote:IsA("RemoteFunction") then
-                pcall(function()
-                    remote:InvokeServer(enemyHumanoid, enemyHrp, enemyChar)
-                end)
-            end
-        end
-        
-        -- 方法3: ReplicatedStorageのRemoteを使用
-        for _, remote in ipairs(weaponRemotes) do
-            pcall(function()
-                if remote:IsA("RemoteEvent") then
-                    remote:FireServer({
-                        Hit = enemyHrp,
-                        Target = enemyChar,
-                        Humanoid = enemyHumanoid,
-                        Position = enemyHrp.Position,
-                        Damage = 100
-                    })
-                elseif remote:IsA("RemoteFunction") then
-                    remote:InvokeServer({
-                        Hit = enemyHrp,
-                        Target = enemyChar,
-                        Humanoid = enemyHumanoid,
-                        Position = enemyHrp.Position,
-                        Damage = 100
-                    })
-                end
-            end)
-        end
-        
-        lastKillTime = tick()
-        
-        Rayfield:Notify({
-            Title = "必中攻撃！",
-            Content = enemyChar.Name .. "を攻撃しました",
-            Duration = 1.5,
-            Image = 4483362458,
-        })
-    end
-end
-
--- 常に監視して自動攻撃
-RunService.RenderStepped:Connect(function()
-    if magicCircleEnabled and circleEnabled then
-        damageEnemyInCircle()
     end
 end)
 
@@ -387,6 +373,23 @@ RunService.RenderStepped:Connect(function()
 end)
 
 -- ========== 戦闘タブ ==========
+local SilentAimToggle = CombatTab:CreateToggle({
+   Name = "🎯 Silent Aim (最強)",
+   CurrentValue = false,
+   Flag = "SilentAimToggle",
+   Callback = function(Value)
+      silentAimEnabled = Value
+      if Value then
+          Rayfield:Notify({
+             Title = "Silent Aim 有効",
+             Content = "撃つだけで自動ヘッドショット！",
+             Duration = 3,
+             Image = 4483362458,
+          })
+      end
+   end,
+})
+
 local SoftAimToggle = CombatTab:CreateToggle({
    Name = "SoftAim (エイムアシスト)",
    CurrentValue = false,
@@ -416,21 +419,22 @@ local AutoAimToggle = CombatTab:CreateToggle({
    end,
 })
 
-local AutoLockToggle = CombatTab:CreateToggle({
-   Name = "AutoLock (自動射撃)",
+local AutoShootToggle = CombatTab:CreateToggle({
+   Name = "🔫 自動射撃",
    CurrentValue = false,
-   Flag = "AutoLockToggle",
+   Flag = "AutoShootToggle",
    Callback = function(Value)
-      autoLockEnabled = Value
+      autoShootEnabled = Value
    end,
 })
 
-local RapidFireToggle = CombatTab:CreateToggle({
-   Name = "RapidFire (連射)",
-   CurrentValue = false,
-   Flag = "RapidFireToggle",
-   Callback = function(Value)
-      rapidFireEnabled = Value
+local AimPartDropdown = CombatTab:CreateDropdown({
+   Name = "狙う部位",
+   Options = {"Head", "UpperTorso", "HumanoidRootPart"},
+   CurrentOption = "Head",
+   Flag = "AimPartDropdown",
+   Callback = function(Option)
+      aimPart = Option
    end,
 })
 
@@ -459,7 +463,7 @@ local CircleToggle = VisualTab:CreateToggle({
 })
 
 local MagicCircleToggle = VisualTab:CreateToggle({
-   Name = "🎯 魔法の円 (円内必中)",
+   Name = "⚡ 魔法の円 (円内オート)",
    CurrentValue = false,
    Flag = "MagicCircleToggle",
    Callback = function(Value)
@@ -467,8 +471,8 @@ local MagicCircleToggle = VisualTab:CreateToggle({
       if Value then
           Rayfield:Notify({
              Title = "魔法の円 有効",
-             Content = "虹色の円をオンにして、円内で撃つと必中します",
-             Duration = 4,
+             Content = "円内の敵に自動エイム＆射撃",
+             Duration = 3,
              Image = 4483362458,
           })
       end
@@ -498,38 +502,26 @@ local FlySpeedSlider = MovementTab:CreateSlider({
 })
 
 -- ========== その他タブ ==========
-local CSVButton = UtilityTab:CreateButton({
-   Name = "ロックログをCSV出力",
-   Callback = function()
-      print("=== ロックログ ===")
-      for name,count in pairs(lockLog) do
-          print(name..","..count)
-      end
-      Rayfield:Notify({
-         Title = "CSV出力完了",
-         Content = "ログがコンソールに出力されました",
-         Duration = 3,
-         Image = 4483362458,
-      })
-   end,
-})
-
 local ResetButton = UtilityTab:CreateButton({
    Name = "設定をリセット",
    Callback = function()
+      silentAimEnabled = false
       softAimEnabled = false
       autoAimEnabled = false
-      autoLockEnabled = false
+      autoShootEnabled = false
       espEnabled = false
       flyEnabled = false
       circleEnabled = false
+      magicCircleEnabled = false
       
+      SilentAimToggle:Set(false)
       SoftAimToggle:Set(false)
       AutoAimToggle:Set(false)
-      AutoLockToggle:Set(false)
+      AutoShootToggle:Set(false)
       ESPToggle:Set(false)
       FlyToggle:Set(false)
       CircleToggle:Set(false)
+      MagicCircleToggle:Set(false)
       
       toggleFly()
       
