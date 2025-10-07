@@ -194,6 +194,69 @@ RunService.RenderStepped:Connect(function()
     end
 end)
 
+-- ========== 虹色の円内で必中機能 ==========
+local function isInMagicCircle(screenPos)
+    local viewportSize = Camera.ViewportSize
+    local centerX = viewportSize.X / 2
+    local centerY = viewportSize.Y / 2
+    
+    if isMobile then
+        centerY = viewportSize.Y * 0.4
+    end
+    
+    local distance = math.sqrt((screenPos.X - centerX)^2 + (screenPos.Y - centerY)^2)
+    return distance <= circleRadius
+end
+
+local function getEnemyInCircle()
+    for _, p in ipairs(Players:GetPlayers()) do
+        if p ~= player and isEnemy(p) and p.Character then
+            local hrp = p.Character:FindFirstChild("HumanoidRootPart")
+            local humanoid = p.Character:FindFirstChildOfClass("Humanoid")
+            if hrp and humanoid and humanoid.Health > 0 then
+                local screenPos, onScreen = Camera:WorldToViewportPoint(hrp.Position)
+                if onScreen and isInMagicCircle(Vector2.new(screenPos.X, screenPos.Y)) then
+                    return p.Character, hrp
+                end
+            end
+        end
+    end
+    return nil, nil
+end
+
+-- 常に監視して自動で倒す
+RunService.RenderStepped:Connect(function()
+    if magicCircleEnabled and circleEnabled then
+        local enemyChar, enemyHrp = getEnemyInCircle()
+        if enemyChar and enemyHrp then
+            -- 複数の方法で確実に倒す
+            local humanoid = enemyChar:FindFirstChildOfClass("Humanoid")
+            if humanoid then
+                -- 方法1: Healthを0に
+                humanoid.Health = 0
+                
+                -- 方法2: Breakjointsで確実に
+                enemyChar:BreakJoints()
+                
+                -- 方法3: HumanoidRootPartを削除
+                if enemyHrp then
+                    enemyHrp:Destroy()
+                end
+                
+                -- 通知
+                Rayfield:Notify({
+                    Title = "必中成功！",
+                    Content = enemyChar.Name .. "を倒しました",
+                    Duration = 1.5,
+                    Image = 4483362458,
+                })
+                
+                wait(0.1) -- 少し待機して連続発動を防ぐ
+            end
+        end
+    end
+end)
+
 -- ========== 虹色の円 ==========
 local circleFolder = Instance.new("Folder")
 circleFolder.Name = "DecorativeCircle"
@@ -325,6 +388,23 @@ local CircleToggle = VisualTab:CreateToggle({
           createCircle(240, 4)
       else
           for _,v in ipairs(circleFolder:GetChildren()) do v:Destroy() end
+      end
+   end,
+})
+
+local MagicCircleToggle = VisualTab:CreateToggle({
+   Name = "🎯 魔法の円 (円内必中)",
+   CurrentValue = false,
+   Flag = "MagicCircleToggle",
+   Callback = function(Value)
+      magicCircleEnabled = Value
+      if Value then
+          Rayfield:Notify({
+             Title = "魔法の円 有効",
+             Content = "虹色の円をオンにして、円内で撃つと必中します",
+             Duration = 4,
+             Image = 4483362458,
+          })
       end
    end,
 })
