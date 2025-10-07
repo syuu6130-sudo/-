@@ -19,12 +19,14 @@ local espEnabled = false
 local flyEnabled = false
 local rapidFireEnabled = false
 local circleEnabled = false
+local magicCircleEnabled = false
 
 local softAimStrength = 0.3
 local flySpeed = 50
 
 local lockLog = {}
 local currentLockTarget = nil
+local circleRadius = 120 -- 円の半径（直径240の半分）
 
 -- ========== Rayfieldウィンドウ作成 ==========
 local Window = Rayfield:CreateWindow({
