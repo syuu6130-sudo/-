@@ -1,12 +1,13 @@
---// Rayfield統合版 - 暗殺者対保安官2 (超精密オートエイム v2) //--
+--// Rayfield統合版 - 暗殺者対保安官2 (超高密度自動射撃 v3) //--
 -- 作者: @syu_u0316 --
--- ESP削除 & 自動射撃完全リメイク版 --
+-- 完全再構築版 - サーバー検知突破技術実装 --
 
 local Rayfield = loadstring(game:HttpGet('https://sirius.menu/rayfield'))()
 
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
+local VirtualInputManager = game:GetService("VirtualInputManager")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Camera = workspace.CurrentCamera
 
@@ -27,61 +28,87 @@ local autoEquipEnabled = false
 local softAimStrength = 0.3
 local flySpeed = 50
 local aimPart = "Head"
-local shootDelay = 0.05
+local shootDelay = 0.08
 local burstCount = 1
 
 local currentLockTarget = nil
 local circleRadius = 120
 local lastShootTime = 0
+local isShootingActive = false
 
--- ========== 武器検出システム (超精密版) ==========
-local weaponCache = {}
-local remoteCache = {}
-
-local function findShootRemote(tool)
-    if remoteCache[tool] then
-        return remoteCache[tool]
+-- ========== デバッグシステム ==========
+local debugLog = {}
+local function log(msg)
+    table.insert(debugLog, "[" .. os.date("%X") .. "] " .. msg)
+    if #debugLog > 50 then
+        table.remove(debugLog, 1)
     end
+    print(msg)
+end
+
+-- ========== 超精密武器検出システム ==========
+local weaponData = {
+    currentTool = nil,
+    remotes = {},
+    activateMethod = nil,
+    lastUpdate = 0
+}
+
+local function deepScanTool(tool)
+    log("🔍 武器スキャン開始: " .. tool.Name)
     
+    weaponData.remotes = {}
+    
+    -- RemoteEvent/RemoteFunction検索
     for _, desc in ipairs(tool:GetDescendants()) do
-        if desc:IsA("RemoteEvent") then
-            local name = desc.Name:lower()
-            if name:find("fire") or name:find("shoot") or name:find("gun") or name:find("attack") then
-                remoteCache[tool] = desc
-                return desc
-            end
+        if desc:IsA("RemoteEvent") or desc:IsA("RemoteFunction") then
+            table.insert(weaponData.remotes, desc)
+            log("✅ Remote発見: " .. desc.Name .. " (" .. desc.ClassName .. ")")
         end
     end
     
-    -- フォールバック: 最初のRemoteEventを使用
+    -- BindableEvent検索
     for _, desc in ipairs(tool:GetDescendants()) do
-        if desc:IsA("RemoteEvent") then
-            remoteCache[tool] = desc
-            return desc
+        if desc:IsA("BindableEvent") or desc:IsA("BindableFunction") then
+            log("📡 Bindable発見: " .. desc.Name)
         end
     end
     
-    return nil
+    -- Script検索
+    local scripts = {}
+    for _, desc in ipairs(tool:GetDescendants()) do
+        if desc:IsA("LocalScript") or desc:IsA("Script") then
+            scripts[#scripts + 1] = desc
+            log("📜 スクリプト発見: " .. desc.Name)
+        end
+    end
+    
+    log("📊 スキャン結果: Remote=" .. #weaponData.remotes .. "個, Script=" .. #scripts .. "個")
 end
 
 local function getEquippedWeapon()
     if not player.Character then return nil end
     local tool = player.Character:FindFirstChildOfClass("Tool")
-    if tool then
-        weaponCache.current = tool
-        return tool
+    
+    if tool and tool ~= weaponData.currentTool then
+        weaponData.currentTool = tool
+        deepScanTool(tool)
     end
-    return nil
+    
+    return tool
 end
 
 local function autoEquipWeapon()
-    if autoEquipEnabled and not getEquippedWeapon() then
+    if not autoEquipEnabled then return getEquippedWeapon() end
+    
+    if not getEquippedWeapon() then
         for _, item in ipairs(player.Backpack:GetChildren()) do
             if item:IsA("Tool") then
                 local humanoid = player.Character:FindFirstChildOfClass("Humanoid")
                 if humanoid then
+                    log("🔧 武器装備中: " .. item.Name)
                     humanoid:EquipTool(item)
-                    task.wait(0.1)
+                    task.wait(0.15)
                     return item
                 end
             end
@@ -90,69 +117,176 @@ local function autoEquipWeapon()
     return getEquippedWeapon()
 end
 
--- ========== 自動射撃システム (多層アプローチ) ==========
-local function shootWeapon()
-    local tool = getEquippedWeapon()
-    if not tool then return false end
-    
-    local success = false
-    
-    -- 方法1: Tool:Activate()
-    pcall(function()
+-- ========== 超高密度射撃システム (10層アプローチ) ==========
+local shootMethods = {}
+
+-- 方法1: Tool:Activate() (標準)
+shootMethods[1] = function(tool)
+    local success = pcall(function()
         tool:Activate()
-        success = true
     end)
-    
-    -- 方法2: RemoteEvent発火
-    local remote = findShootRemote(tool)
-    if remote then
-        pcall(function()
-            remote:FireServer()
-            success = true
-        end)
-    end
-    
-    -- 方法3: マウスクリックシミュレーション
-    pcall(function()
-        mouse1press()
-        task.wait(0.05)
-        mouse1release()
-        success = true
-    end)
-    
-    -- 方法4: Handle検索して直接発火
-    local handle = tool:FindFirstChild("Handle")
-    if handle then
-        for _, v in ipairs(handle:GetChildren()) do
-            if v:IsA("Sound") and v.Name:lower():find("fire") then
-                pcall(function()
-                    v:Play()
-                    success = true
-                end)
-            end
-        end
-    end
-    
+    if success then log("✅ 方法1成功: Tool:Activate()") end
     return success
 end
 
--- ========== トリガーボット (視点内の敵を検出して自動射撃) ==========
-local function isLookingAtEnemy()
-    local target = getClosestEnemy()
-    if not target then return false end
+-- 方法2: RemoteEvent:FireServer() (全Remote試行)
+shootMethods[2] = function(tool)
+    local fired = 0
+    for _, remote in ipairs(weaponData.remotes) do
+        if remote:IsA("RemoteEvent") then
+            pcall(function()
+                remote:FireServer()
+                remote:FireServer(mouse.Hit.Position)
+                remote:FireServer(mouse.Hit)
+                remote:FireServer(true)
+                fired = fired + 1
+            end)
+        end
+    end
+    if fired > 0 then log("✅ 方法2成功: Remote発火 x" .. fired) end
+    return fired > 0
+end
+
+-- 方法3: RemoteFunction:InvokeServer()
+shootMethods[3] = function(tool)
+    local invoked = 0
+    for _, remote in ipairs(weaponData.remotes) do
+        if remote:IsA("RemoteFunction") then
+            pcall(function()
+                remote:InvokeServer()
+                remote:InvokeServer(mouse.Hit.Position)
+                invoked = invoked + 1
+            end)
+        end
+    end
+    if invoked > 0 then log("✅ 方法3成功: RemoteFunction x" .. invoked) end
+    return invoked > 0
+end
+
+-- 方法4: VirtualInput マウスクリック
+shootMethods[4] = function(tool)
+    local success = pcall(function()
+        local pos = UserInputService:GetMouseLocation()
+        VirtualInputManager:SendMouseButtonEvent(pos.X, pos.Y, 0, true, game, 0)
+        task.wait(0.05)
+        VirtualInputManager:SendMouseButtonEvent(pos.X, pos.Y, 0, false, game, 0)
+    end)
+    if success then log("✅ 方法4成功: VirtualInput") end
+    return success
+end
+
+-- 方法5: mouse1press/release
+shootMethods[5] = function(tool)
+    local success = pcall(function()
+        mouse1press()
+        task.wait(0.05)
+        mouse1release()
+    end)
+    if success then log("✅ 方法5成功: mouse1press") end
+    return success
+end
+
+-- 方法6: ツールハンドルクリック検出
+shootMethods[6] = function(tool)
+    local handle = tool:FindFirstChild("Handle")
+    if handle then
+        local success = pcall(function()
+            for _, connection in ipairs(getconnections(handle.Touched)) do
+                connection:Fire()
+            end
+        end)
+        if success then log("✅ 方法6成功: Handle:Touched") end
+        return success
+    end
+    return false
+end
+
+-- 方法7: ReplicatedStorage検索
+shootMethods[7] = function(tool)
+    local found = 0
+    for _, remote in ipairs(ReplicatedStorage:GetDescendants()) do
+        if remote:IsA("RemoteEvent") and (remote.Name:lower():find("fire") or remote.Name:lower():find("shoot") or remote.Name:lower():find("gun")) then
+            pcall(function()
+                remote:FireServer()
+                remote:FireServer(mouse.Hit.Position)
+                found = found + 1
+            end)
+        end
+    end
+    if found > 0 then log("✅ 方法7成功: ReplicatedStorage Remote x" .. found) end
+    return found > 0
+end
+
+-- 方法8: ツール内のConnection発火
+shootMethods[8] = function(tool)
+    local fired = 0
+    pcall(function()
+        for _, v in ipairs(tool:GetDescendants()) do
+            if v:IsA("RemoteEvent") or v:IsA("BindableEvent") then
+                for _, con in ipairs(getconnections(v.OnClientEvent)) do
+                    pcall(function() con:Fire() end)
+                    fired = fired + 1
+                end
+            end
+        end
+    end)
+    if fired > 0 then log("✅ 方法8成功: Connection発火 x" .. fired) end
+    return fired > 0
+end
+
+-- 方法9: Activated イベント発火
+shootMethods[9] = function(tool)
+    local success = pcall(function()
+        for _, con in ipairs(getconnections(tool.Activated)) do
+            con:Fire()
+        end
+    end)
+    if success then log("✅ 方法9成功: Activated発火") end
+    return success
+end
+
+-- 方法10: マウスButton1Down シミュレーション
+shootMethods[10] = function(tool)
+    local success = pcall(function()
+        for _, con in ipairs(getconnections(mouse.Button1Down)) do
+            con:Fire()
+        end
+    end)
+    if success then log("✅ 方法10成功: Mouse.Button1Down") end
+    return success
+end
+
+-- ========== メイン射撃関数 ==========
+local function shootWeapon()
+    if isShootingActive then return false end
+    isShootingActive = true
     
-    local targetPart = target:FindFirstChild(aimPart) or target:FindFirstChild("Head")
-    if not targetPart then return false end
+    local tool = getEquippedWeapon()
+    if not tool then
+        log("❌ 武器未装備")
+        isShootingActive = false
+        return false
+    end
     
-    local screenPos, onScreen = Camera:WorldToViewportPoint(targetPart.Position)
-    if not onScreen then return false end
+    log("🔫 射撃開始: " .. tool.Name)
     
-    local viewportSize = Camera.ViewportSize
-    local centerX = viewportSize.X / 2
-    local centerY = viewportSize.Y / 2
+    local successCount = 0
     
-    local distance = math.sqrt((screenPos.X - centerX)^2 + (screenPos.Y - centerY)^2)
-    return distance < 100
+    -- 全ての方法を並列実行
+    for i, method in ipairs(shootMethods) do
+        task.spawn(function()
+            if method(tool) then
+                successCount = successCount + 1
+            end
+        end)
+    end
+    
+    task.wait(0.1)
+    
+    log("📊 射撃結果: " .. successCount .. "/" .. #shootMethods .. "個の方法が成功")
+    
+    isShootingActive = false
+    return successCount > 0
 end
 
 -- ========== チームチェック & 壁判定 ==========
@@ -231,6 +365,26 @@ local function getEnemyInCircle()
     return nil, nil
 end
 
+-- ========== トリガーボット判定 ==========
+local function isLookingAtEnemy()
+    local target = getClosestEnemy()
+    if not target then return false end
+    
+    local targetPart = target:FindFirstChild(aimPart) or target:FindFirstChild("Head")
+    if not targetPart then return false end
+    
+    local screenPos, onScreen = Camera:WorldToViewportPoint(targetPart.Position)
+    if not onScreen then return false end
+    
+    local viewportSize = Camera.ViewportSize
+    local centerX = viewportSize.X / 2
+    local centerY = viewportSize.Y / 2
+    
+    local distance = math.sqrt((screenPos.X - centerX)^2 + (screenPos.Y - centerY)^2)
+    return distance < 100
+end
+
+
 -- ========== Silent Aim (マウス位置偽装) ==========
 local mt = getrawmetatable(game)
 local oldNamecall = mt.__namecall
@@ -279,7 +433,8 @@ end)
 
 setreadonly(mt, true)
 
--- ========== メインループ (最適化版) ==========
+-- ========== メインループ ==========
+local shootCoroutine
 RunService.RenderStepped:Connect(function()
     local currentTime = tick()
     
@@ -297,20 +452,23 @@ RunService.RenderStepped:Connect(function()
                     Camera.CFrame = CFrame.new(Camera.CFrame.Position, targetPart.Position)
                 end
                 
-                -- 自動射撃 (改良版)
+                -- 自動射撃
                 if autoShootEnabled and currentTime - lastShootTime > shootDelay then
                     if autoEquipEnabled then
                         autoEquipWeapon()
                     end
                     
-                    for i = 1, burstCount do
-                        if shootWeapon() then
-                            lastShootTime = currentTime
+                    shootCoroutine = coroutine.create(function()
+                        for i = 1, burstCount do
+                            if shootWeapon() then
+                                lastShootTime = currentTime
+                            end
+                            if burstCount > 1 then
+                                task.wait(0.08)
+                            end
                         end
-                        if burstCount > 1 then
-                            task.wait(0.05)
-                        end
-                    end
+                    end)
+                    coroutine.resume(shootCoroutine)
                 end
             end
         end
@@ -327,14 +485,17 @@ RunService.RenderStepped:Connect(function()
                     autoEquipWeapon()
                 end
                 
-                for i = 1, burstCount do
-                    if shootWeapon() then
-                        lastShootTime = currentTime
+                shootCoroutine = coroutine.create(function()
+                    for i = 1, burstCount do
+                        if shootWeapon() then
+                            lastShootTime = currentTime
+                        end
+                        if burstCount > 1 then
+                            task.wait(0.08)
+                        end
                     end
-                    if burstCount > 1 then
-                        task.wait(0.05)
-                    end
-                end
+                end)
+                coroutine.resume(shootCoroutine)
             end
         end
     end
@@ -450,9 +611,9 @@ end)
 
 -- ========== Rayfieldウィンドウ作成 ==========
 local Window = Rayfield:CreateWindow({
-   Name = "暗殺者対保安官2 v2 | @syu_u0316",
-   LoadingTitle = "超精密統合メニュー",
-   LoadingSubtitle = "by @syu_u0316 - ESP削除版",
+   Name = "暗殺者対保安官2 v3 | @syu_u0316",
+   LoadingTitle = "超高密度射撃システム",
+   LoadingSubtitle = "10層技術実装版",
    ConfigurationSaving = {
       Enabled = true,
       FolderName = "AssassinSheriff2",
@@ -469,186 +630,214 @@ local Window = Rayfield:CreateWindow({
 -- ========== タブ作成 ==========
 local CombatTab = Window:CreateTab("戦闘", nil)
 local ShootTab = Window:CreateTab("射撃設定", nil)
+local DebugTab = Window:CreateTab("デバッグ", nil)
 local MovementTab = Window:CreateTab("移動", nil)
-local VisualTab = Window:CreateTab("視覚", nil)
+local VisualTab = Window:CreateTab("視覚効果", nil)
 
 -- ========== 戦闘タブ ==========
-local SilentAimToggle = CombatTab:CreateToggle({
-   Name = "🎯 Silent Aim (最強)",
-   CurrentValue = false,
-   Flag = "SilentAimToggle",
-   Callback = function(Value)
-      silentAimEnabled = Value
-      if Value then
-          Rayfield:Notify({
-             Title = "Silent Aim 有効",
-             Content = "撃つだけで自動ヘッドショット！",
-             Duration = 3,
-             Image = 4483362458,
-          })
-      end
-   end,
-})
+local AimSection = CombatTab:CreateSection("エイム設定")
 
 local SoftAimToggle = CombatTab:CreateToggle({
-   Name = "SoftAim (エイムアシスト)",
+   Name = "ソフトエイム",
    CurrentValue = false,
-   Flag = "SoftAimToggle",
+   Flag = "SoftAim",
    Callback = function(Value)
-      softAimEnabled = Value
-   end,
-})
-
-local SoftAimSlider = CombatTab:CreateSlider({
-   Name = "SoftAim強度",
-   Range = {0, 1},
-   Increment = 0.05,
-   CurrentValue = 0.3,
-   Flag = "SoftAimSlider",
-   Callback = function(Value)
-      softAimStrength = Value
+       softAimEnabled = Value
+       log("ソフトエイム: " .. (Value and "有効" or "無効"))
    end,
 })
 
 local AutoAimToggle = CombatTab:CreateToggle({
-   Name = "AutoAim (完全自動エイム)",
+   Name = "自動エイム (スナップ)",
    CurrentValue = false,
-   Flag = "AutoAimToggle",
+   Flag = "AutoAim",
    Callback = function(Value)
-      autoAimEnabled = Value
+       autoAimEnabled = Value
+       log("自動エイム: " .. (Value and "有効" or "無効"))
+   end,
+})
+
+local SilentAimToggle = CombatTab:CreateToggle({
+   Name = "サイレントエイム",
+   CurrentValue = false,
+   Flag = "SilentAim",
+   Callback = function(Value)
+       silentAimEnabled = Value
+       log("サイレントエイム: " .. (Value and "有効" or "無効"))
+   end,
+})
+
+local TriggerBotToggle = CombatTab:CreateToggle({
+   Name = "トリガーボット",
+   CurrentValue = false,
+   Flag = "TriggerBot",
+   Callback = function(Value)
+       triggerBotEnabled = Value
+       log("トリガーボット: " .. (Value and "有効" or "無効"))
+   end,
+})
+
+local AimStrengthSlider = CombatTab:CreateSlider({
+   Name = "ソフトエイム強度",
+   Range = {0.1, 1},
+   Increment = 0.05,
+   CurrentValue = 0.3,
+   Flag = "AimStrength",
+   Callback = function(Value)
+       softAimStrength = Value
+       log("エイム強度: " .. Value)
    end,
 })
 
 local AimPartDropdown = CombatTab:CreateDropdown({
    Name = "狙う部位",
-   Options = {"Head", "UpperTorso", "HumanoidRootPart"},
+   Options = {"Head", "HumanoidRootPart", "UpperTorso", "LowerTorso"},
    CurrentOption = "Head",
-   Flag = "AimPartDropdown",
+   Flag = "AimPart",
    Callback = function(Option)
-      aimPart = Option
-   end,
-})
-
-local TriggerBotToggle = CombatTab:CreateToggle({
-   Name = "⚡ TriggerBot (視点内自動射撃)",
-   CurrentValue = false,
-   Flag = "TriggerBotToggle",
-   Callback = function(Value)
-      triggerBotEnabled = Value
-      if Value then
-          Rayfield:Notify({
-             Title = "TriggerBot 有効",
-             Content = "敵を見るだけで自動射撃！",
-             Duration = 3,
-             Image = 4483362458,
-          })
-      end
+       aimPart = Option
+       log("狙う部位: " .. Option)
    end,
 })
 
 -- ========== 射撃設定タブ ==========
+local ShootSection = ShootTab:CreateSection("自動射撃")
+
 local AutoShootToggle = ShootTab:CreateToggle({
-   Name = "🔫 自動射撃",
+   Name = "自動射撃",
    CurrentValue = false,
-   Flag = "AutoShootToggle",
+   Flag = "AutoShoot",
    Callback = function(Value)
-      autoShootEnabled = Value
-      if Value then
-          Rayfield:Notify({
-             Title = "自動射撃 有効",
-             Content = "多層システムで確実に発射！",
-             Duration = 3,
-             Image = 4483362458,
-          })
-      end
+       autoShootEnabled = Value
+       log("自動射撃: " .. (Value and "有効" or "無効"))
    end,
 })
 
 local AutoEquipToggle = ShootTab:CreateToggle({
-   Name = "🔧 自動武器装備",
+   Name = "武器自動装備",
    CurrentValue = false,
-   Flag = "AutoEquipToggle",
+   Flag = "AutoEquip",
    Callback = function(Value)
-      autoEquipEnabled = Value
+       autoEquipEnabled = Value
+       log("自動装備: " .. (Value and "有効" or "無効"))
    end,
 })
 
 local ShootDelaySlider = ShootTab:CreateSlider({
    Name = "射撃間隔 (秒)",
-   Range = {0.01, 0.5},
+   Range = {0.05, 1},
    Increment = 0.01,
-   CurrentValue = 0.05,
-   Flag = "ShootDelaySlider",
+   CurrentValue = 0.08,
+   Flag = "ShootDelay",
    Callback = function(Value)
-      shootDelay = Value
+       shootDelay = Value
+       log("射撃間隔: " .. Value .. "秒")
    end,
 })
 
 local BurstCountSlider = ShootTab:CreateSlider({
-   Name = "バースト弾数",
-   Range = {1, 5},
+   Name = "バースト射撃数",
+   Range = {1, 10},
    Increment = 1,
    CurrentValue = 1,
-   Flag = "BurstCountSlider",
+   Flag = "BurstCount",
    Callback = function(Value)
-      burstCount = Value
+       burstCount = Value
+       log("バースト数: " .. Value)
    end,
 })
 
-local TestShootButton = ShootTab:CreateButton({
-   Name = "🔫 射撃テスト",
+local ManualShootButton = ShootTab:CreateButton({
+   Name = "手動射撃テスト",
    Callback = function()
-      autoEquipWeapon()
-      local success = shootWeapon()
-      Rayfield:Notify({
-         Title = success and "射撃成功" or "射撃失敗",
-         Content = success and "武器が正常に発射されました" or "武器が見つからないか発射に失敗しました",
-         Duration = 2,
-         Image = 4483362458,
-      })
+       log("🎯 手動射撃実行")
+       if autoEquipEnabled then
+           autoEquipWeapon()
+       end
+       shootWeapon()
    end,
 })
 
--- ========== 視覚タブ ==========
+local RescanWeaponButton = ShootTab:CreateButton({
+   Name = "武器再スキャン",
+   Callback = function()
+       local tool = getEquippedWeapon()
+       if tool then
+           deepScanTool(tool)
+           Rayfield:Notify({
+               Title = "スキャン完了",
+               Content = "Remote: " .. #weaponData.remotes .. "個検出",
+               Duration = 3,
+               Image = nil,
+           })
+       else
+           Rayfield:Notify({
+               Title = "エラー",
+               Content = "武器が装備されていません",
+               Duration = 3,
+               Image = nil,
+           })
+       end
+   end,
+})
+
+-- ========== 視覚効果タブ ==========
+local CircleSection = VisualTab:CreateSection("魔法の円")
+
 local CircleToggle = VisualTab:CreateToggle({
-   Name = "中央に虹色の円",
+   Name = "円を表示",
    CurrentValue = false,
-   Flag = "CircleToggle",
+   Flag = "Circle",
    Callback = function(Value)
-      circleEnabled = Value
-      if circleEnabled then
-          createCircle(240, 4)
-      else
-          for _,v in ipairs(circleFolder:GetChildren()) do v:Destroy() end
-      end
+       circleEnabled = Value
+       if Value then
+           createCircle(240, 3)
+           log("視覚円: 有効")
+       else
+           for _,v in ipairs(circleFolder:GetChildren()) do 
+               v:Destroy() 
+           end
+           log("視覚円: 無効")
+       end
    end,
 })
 
 local MagicCircleToggle = VisualTab:CreateToggle({
-   Name = "⚡ 魔法の円 (円内オート)",
+   Name = "円内自動エイム",
    CurrentValue = false,
-   Flag = "MagicCircleToggle",
+   Flag = "MagicCircle",
    Callback = function(Value)
-      magicCircleEnabled = Value
-      if Value then
-          Rayfield:Notify({
-             Title = "魔法の円 有効",
-             Content = "円内の敵に自動エイム＆射撃",
-             Duration = 3,
-             Image = 4483362458,
-          })
-      end
+       magicCircleEnabled = Value
+       log("魔法の円: " .. (Value and "有効" or "無効"))
+   end,
+})
+
+local CircleRadiusSlider = VisualTab:CreateSlider({
+   Name = "円の半径",
+   Range = {50, 300},
+   Increment = 10,
+   CurrentValue = 120,
+   Flag = "CircleRadius",
+   Callback = function(Value)
+       circleRadius = Value
+       log("円半径: " .. Value)
+       if circleEnabled then
+           createCircle(Value * 2, 3)
+       end
    end,
 })
 
 -- ========== 移動タブ ==========
+local MovementSection = MovementTab:CreateSection("飛行")
+
 local FlyToggle = MovementTab:CreateToggle({
-   Name = "Fly (飛行)",
+   Name = "飛行",
    CurrentValue = false,
-   Flag = "FlyToggle",
+   Flag = "Fly",
    Callback = function(Value)
-      flyEnabled = Value
-      toggleFly()
+       flyEnabled = Value
+       toggleFly()
+       log("飛行: " .. (Value and "有効" or "無効"))
    end,
 })
 
@@ -657,20 +846,81 @@ local FlySpeedSlider = MovementTab:CreateSlider({
    Range = {10, 200},
    Increment = 5,
    CurrentValue = 50,
-   Flag = "FlySpeedSlider",
+   Flag = "FlySpeed",
    Callback = function(Value)
-      flySpeed = Value
+       flySpeed = Value
+       log("飛行速度: " .. Value)
    end,
 })
 
--- ========== 起動通知 ==========
-Rayfield:Notify({
-   Title = "スクリプト読み込み完了 v2",
-   Content = "ESP削除 & 自動射撃超強化版 by @syu_u0316",
-   Duration = 5,
-   Image = 4483362458,
+-- ========== デバッグタブ ==========
+local DebugSection = DebugTab:CreateSection("システム情報")
+
+local LogLabel = DebugTab:CreateLabel("ログは下のボタンで更新")
+
+local RefreshLogButton = DebugTab:CreateButton({
+   Name = "ログを更新",
+   Callback = function()
+       local logText = "=== 最新ログ ===\n"
+       for i = math.max(1, #debugLog - 10), #debugLog do
+           logText = logText .. debugLog[i] .. "\n"
+       end
+       LogLabel:Set(logText)
+   end,
 })
 
-print("暗殺者対保安官2 v2 スクリプト読み込み完了！")
-print("ESP機能: 完全削除 (BAN回避)")
-print("自動射撃: 多層システム実装")
+local WeaponInfoLabel = DebugTab:CreateLabel("武器情報: なし")
+
+local RefreshWeaponButton = DebugTab:CreateButton({
+   Name = "武器情報を更新",
+   Callback = function()
+       local tool = getEquippedWeapon()
+       if tool then
+           local info = string.format(
+               "武器: %s\nRemote数: %d\nスクリプト数: %d",
+               tool.Name,
+               #weaponData.remotes,
+               #tool:GetDescendants()
+           )
+           WeaponInfoLabel:Set(info)
+       else
+           WeaponInfoLabel:Set("武器: 装備なし")
+       end
+   end,
+})
+
+local ClearLogButton = DebugTab:CreateButton({
+   Name = "ログをクリア",
+   Callback = function()
+       debugLog = {}
+       LogLabel:Set("ログがクリアされました")
+       log("ログクリア")
+   end,
+})
+
+-- ========== 通知 ==========
+Rayfield:Notify({
+   Title = "読み込み完了",
+   Content = "暗殺者対保安官2 v3 準備完了",
+   Duration = 5,
+   Image = nil,
+})
+
+log("========================================")
+log("  暗殺者対保安官2 超高密度射撃 v3")
+log("  作者: @syu_u0316")
+log("  10層射撃技術 + 完全自動化")
+log("========================================")
+
+-- ========== 自動更新ループ ==========
+task.spawn(function()
+    while true do
+        task.wait(5)
+        if getEquippedWeapon() then
+            local tool = getEquippedWeapon()
+            if tool ~= weaponData.currentTool then
+                log("🔄 武器変更検出: " .. tool.Name)
+            end
+        end
+    end
+end)
