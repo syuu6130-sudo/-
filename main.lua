@@ -1,11 +1,13 @@
---// Rayfield統合版 - 暗殺者対保安官2 (超精密オートエイム) //--
+--// Rayfield統合版 - 暗殺者対保安官2 (超精密オートエイム v2) //--
 -- 作者: @syu_u0316 --
+-- ESP削除 & 自動射撃完全リメイク版 --
 
 local Rayfield = loadstring(game:HttpGet('https://sirius.menu/rayfield'))()
 
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Camera = workspace.CurrentCamera
 
 local player = Players.LocalPlayer
@@ -15,44 +17,143 @@ local mouse = player:GetMouse()
 local softAimEnabled = false
 local autoAimEnabled = false
 local autoShootEnabled = false
-local espEnabled = false
 local flyEnabled = false
-local rapidFireEnabled = false
 local circleEnabled = false
 local magicCircleEnabled = false
 local silentAimEnabled = false
+local triggerBotEnabled = false
+local autoEquipEnabled = false
 
 local softAimStrength = 0.3
 local flySpeed = 50
-local aimPart = "Head" -- Head, UpperTorso, HumanoidRootPart
+local aimPart = "Head"
+local shootDelay = 0.05
+local burstCount = 1
 
-local lockLog = {}
 local currentLockTarget = nil
 local circleRadius = 120
+local lastShootTime = 0
 
--- ========== Rayfieldウィンドウ作成 ==========
-local Window = Rayfield:CreateWindow({
-   Name = "暗殺者対保安官2 | @syu_u0316",
-   LoadingTitle = "統合メニュー",
-   LoadingSubtitle = "by @syu_u0316",
-   ConfigurationSaving = {
-      Enabled = true,
-      FolderName = "AssassinSheriff2",
-      FileName = "config"
-   },
-   Discord = {
-      Enabled = false,
-      Invite = "noinvitelink",
-      RememberJoins = true
-   },
-   KeySystem = false
-})
+-- ========== 武器検出システム (超精密版) ==========
+local weaponCache = {}
+local remoteCache = {}
 
--- ========== タブ作成 ==========
-local CombatTab = Window:CreateTab("戦闘", nil)
-local VisualTab = Window:CreateTab("視覚", nil)
-local MovementTab = Window:CreateTab("移動", nil)
-local UtilityTab = Window:CreateTab("その他", nil)
+local function findShootRemote(tool)
+    if remoteCache[tool] then
+        return remoteCache[tool]
+    end
+    
+    for _, desc in ipairs(tool:GetDescendants()) do
+        if desc:IsA("RemoteEvent") then
+            local name = desc.Name:lower()
+            if name:find("fire") or name:find("shoot") or name:find("gun") or name:find("attack") then
+                remoteCache[tool] = desc
+                return desc
+            end
+        end
+    end
+    
+    -- フォールバック: 最初のRemoteEventを使用
+    for _, desc in ipairs(tool:GetDescendants()) do
+        if desc:IsA("RemoteEvent") then
+            remoteCache[tool] = desc
+            return desc
+        end
+    end
+    
+    return nil
+end
+
+local function getEquippedWeapon()
+    if not player.Character then return nil end
+    local tool = player.Character:FindFirstChildOfClass("Tool")
+    if tool then
+        weaponCache.current = tool
+        return tool
+    end
+    return nil
+end
+
+local function autoEquipWeapon()
+    if autoEquipEnabled and not getEquippedWeapon() then
+        for _, item in ipairs(player.Backpack:GetChildren()) do
+            if item:IsA("Tool") then
+                local humanoid = player.Character:FindFirstChildOfClass("Humanoid")
+                if humanoid then
+                    humanoid:EquipTool(item)
+                    task.wait(0.1)
+                    return item
+                end
+            end
+        end
+    end
+    return getEquippedWeapon()
+end
+
+-- ========== 自動射撃システム (多層アプローチ) ==========
+local function shootWeapon()
+    local tool = getEquippedWeapon()
+    if not tool then return false end
+    
+    local success = false
+    
+    -- 方法1: Tool:Activate()
+    pcall(function()
+        tool:Activate()
+        success = true
+    end)
+    
+    -- 方法2: RemoteEvent発火
+    local remote = findShootRemote(tool)
+    if remote then
+        pcall(function()
+            remote:FireServer()
+            success = true
+        end)
+    end
+    
+    -- 方法3: マウスクリックシミュレーション
+    pcall(function()
+        mouse1press()
+        task.wait(0.05)
+        mouse1release()
+        success = true
+    end)
+    
+    -- 方法4: Handle検索して直接発火
+    local handle = tool:FindFirstChild("Handle")
+    if handle then
+        for _, v in ipairs(handle:GetChildren()) do
+            if v:IsA("Sound") and v.Name:lower():find("fire") then
+                pcall(function()
+                    v:Play()
+                    success = true
+                end)
+            end
+        end
+    end
+    
+    return success
+end
+
+-- ========== トリガーボット (視点内の敵を検出して自動射撃) ==========
+local function isLookingAtEnemy()
+    local target = getClosestEnemy()
+    if not target then return false end
+    
+    local targetPart = target:FindFirstChild(aimPart) or target:FindFirstChild("Head")
+    if not targetPart then return false end
+    
+    local screenPos, onScreen = Camera:WorldToViewportPoint(targetPart.Position)
+    if not onScreen then return false end
+    
+    local viewportSize = Camera.ViewportSize
+    local centerX = viewportSize.X / 2
+    local centerY = viewportSize.Y / 2
+    
+    local distance = math.sqrt((screenPos.X - centerX)^2 + (screenPos.Y - centerY)^2)
+    return distance < 100
+end
 
 -- ========== チームチェック & 壁判定 ==========
 local function isVisible(target)
@@ -71,11 +172,11 @@ local function isEnemy(plr)
 end
 
 -- ========== 最も近い敵を取得 ==========
-local function getClosestEnemy()
+function getClosestEnemy()
     local closest, dist = nil, math.huge
     local camCF = Camera.CFrame
     local camDir = camCF.LookVector
-    local maxAngle = math.rad(60)
+    local maxAngle = math.rad(70)
 
     for _, p in ipairs(Players:GetPlayers()) do
         if p ~= player and isEnemy(p) and p.Character then
@@ -130,65 +231,6 @@ local function getEnemyInCircle()
     return nil, nil
 end
 
--- ========== ESP ==========
-local function createESP(char, color)
-    if not char:FindFirstChild("HumanoidRootPart") then return end
-    local highlight = Instance.new("Highlight")
-    highlight.Name = "ESPHighlight"
-    highlight.FillColor = color
-    highlight.OutlineColor = color
-    highlight.FillTransparency = 0.7
-    highlight.OutlineTransparency = 0
-    highlight.Parent = char
-end
-
-local function updateESP()
-    for _,p in ipairs(Players:GetPlayers()) do
-        if p ~= player and p.Character and p.Character:FindFirstChild("HumanoidRootPart") then
-            if espEnabled then
-                if not p.Character:FindFirstChild("ESPHighlight") then
-                    local c = isEnemy(p) and Color3.new(1,0,0) or Color3.new(0,1,0)
-                    createESP(p.Character,c)
-                end
-            else
-                if p.Character:FindFirstChild("ESPHighlight") then
-                    p.Character.ESPHighlight:Destroy()
-                end
-            end
-        end
-    end
-end
-
--- ========== 武器検出と自動射撃 ==========
-local function getEquippedTool()
-    return player.Character and player.Character:FindFirstChildOfClass("Tool")
-end
-
-local function autoEquipWeapon()
-    if not getEquippedTool() then
-        for _, item in ipairs(player.Backpack:GetChildren()) do
-            if item:IsA("Tool") then
-                player.Character.Humanoid:EquipTool(item)
-                return item
-            end
-        end
-    end
-    return getEquippedTool()
-end
-
-local function shootWeapon()
-    local tool = getEquippedTool()
-    if tool then
-        tool:Activate()
-        -- Remote検索して発火
-        for _, v in ipairs(tool:GetDescendants()) do
-            if v:IsA("RemoteEvent") and (v.Name:lower():find("fire") or v.Name:lower():find("shoot")) then
-                pcall(function() v:FireServer() end)
-            end
-        end
-    end
-end
-
 -- ========== Silent Aim (マウス位置偽装) ==========
 local mt = getrawmetatable(game)
 local oldNamecall = mt.__namecall
@@ -199,14 +241,15 @@ mt.__namecall = newcclosure(function(self, ...)
     local args = {...}
     local method = getnamecallmethod()
     
-    if silentAimEnabled and method == "FireServer" then
+    if silentAimEnabled and (method == "FireServer" or method == "InvokeServer") then
         local target = getClosestEnemy()
         if target then
             local targetPart = target:FindFirstChild(aimPart) or target:FindFirstChild("Head")
             if targetPart then
-                -- 引数を書き換えてヘッドショットを強制
                 if typeof(args[1]) == "Vector3" then
                     args[1] = targetPart.Position
+                elseif typeof(args[1]) == "CFrame" then
+                    args[1] = targetPart.CFrame
                 elseif typeof(args[1]) == "Instance" then
                     args[1] = targetPart
                 end
@@ -218,12 +261,16 @@ mt.__namecall = newcclosure(function(self, ...)
 end)
 
 mt.__index = newcclosure(function(self, key)
-    if silentAimEnabled and key == "Hit" then
+    if silentAimEnabled and (key == "Hit" or key == "Target") then
         local target = getClosestEnemy()
         if target then
             local targetPart = target:FindFirstChild(aimPart) or target:FindFirstChild("Head")
             if targetPart then
-                return targetPart
+                if key == "Hit" then
+                    return targetPart.CFrame
+                else
+                    return targetPart
+                end
             end
         end
     end
@@ -232,11 +279,10 @@ end)
 
 setreadonly(mt, true)
 
--- ========== メインループ ==========
-local lastShootTime = 0
-local shootCooldown = 0.1
-
+-- ========== メインループ (最適化版) ==========
 RunService.RenderStepped:Connect(function()
+    local currentTime = tick()
+    
     -- 通常のエイム
     if softAimEnabled or autoAimEnabled then
         local target = getClosestEnemy()
@@ -251,10 +297,20 @@ RunService.RenderStepped:Connect(function()
                     Camera.CFrame = CFrame.new(Camera.CFrame.Position, targetPart.Position)
                 end
                 
-                if autoShootEnabled and tick() - lastShootTime > shootCooldown then
-                    autoEquipWeapon()
-                    shootWeapon()
-                    lastShootTime = tick()
+                -- 自動射撃 (改良版)
+                if autoShootEnabled and currentTime - lastShootTime > shootDelay then
+                    if autoEquipEnabled then
+                        autoEquipWeapon()
+                    end
+                    
+                    for i = 1, burstCount do
+                        if shootWeapon() then
+                            lastShootTime = currentTime
+                        end
+                        if burstCount > 1 then
+                            task.wait(0.05)
+                        end
+                    end
                 end
             end
         end
@@ -266,15 +322,35 @@ RunService.RenderStepped:Connect(function()
         if target and targetPart then
             Camera.CFrame = CFrame.new(Camera.CFrame.Position, targetPart.Position)
             
-            if tick() - lastShootTime > shootCooldown then
-                autoEquipWeapon()
-                shootWeapon()
-                lastShootTime = tick()
+            if currentTime - lastShootTime > shootDelay then
+                if autoEquipEnabled then
+                    autoEquipWeapon()
+                end
+                
+                for i = 1, burstCount do
+                    if shootWeapon() then
+                        lastShootTime = currentTime
+                    end
+                    if burstCount > 1 then
+                        task.wait(0.05)
+                    end
+                end
             end
         end
     end
     
-    updateESP()
+    -- トリガーボット
+    if triggerBotEnabled and isLookingAtEnemy() then
+        if currentTime - lastShootTime > shootDelay then
+            if autoEquipEnabled then
+                autoEquipWeapon()
+            end
+            
+            if shootWeapon() then
+                lastShootTime = currentTime
+            end
+        end
+    end
 end)
 
 -- ========== Fly ==========
@@ -372,6 +448,30 @@ RunService.RenderStepped:Connect(function()
     end
 end)
 
+-- ========== Rayfieldウィンドウ作成 ==========
+local Window = Rayfield:CreateWindow({
+   Name = "暗殺者対保安官2 v2 | @syu_u0316",
+   LoadingTitle = "超精密統合メニュー",
+   LoadingSubtitle = "by @syu_u0316 - ESP削除版",
+   ConfigurationSaving = {
+      Enabled = true,
+      FolderName = "AssassinSheriff2",
+      FileName = "config"
+   },
+   Discord = {
+      Enabled = false,
+      Invite = "noinvitelink",
+      RememberJoins = true
+   },
+   KeySystem = false
+})
+
+-- ========== タブ作成 ==========
+local CombatTab = Window:CreateTab("戦闘", nil)
+local ShootTab = Window:CreateTab("射撃設定", nil)
+local MovementTab = Window:CreateTab("移動", nil)
+local VisualTab = Window:CreateTab("視覚", nil)
+
 -- ========== 戦闘タブ ==========
 local SilentAimToggle = CombatTab:CreateToggle({
    Name = "🎯 Silent Aim (最強)",
@@ -419,15 +519,6 @@ local AutoAimToggle = CombatTab:CreateToggle({
    end,
 })
 
-local AutoShootToggle = CombatTab:CreateToggle({
-   Name = "🔫 自動射撃",
-   CurrentValue = false,
-   Flag = "AutoShootToggle",
-   Callback = function(Value)
-      autoShootEnabled = Value
-   end,
-})
-
 local AimPartDropdown = CombatTab:CreateDropdown({
    Name = "狙う部位",
    Options = {"Head", "UpperTorso", "HumanoidRootPart"},
@@ -438,16 +529,87 @@ local AimPartDropdown = CombatTab:CreateDropdown({
    end,
 })
 
--- ========== 視覚タブ ==========
-local ESPToggle = VisualTab:CreateToggle({
-   Name = "ESP (敵表示)",
+local TriggerBotToggle = CombatTab:CreateToggle({
+   Name = "⚡ TriggerBot (視点内自動射撃)",
    CurrentValue = false,
-   Flag = "ESPToggle",
+   Flag = "TriggerBotToggle",
    Callback = function(Value)
-      espEnabled = Value
+      triggerBotEnabled = Value
+      if Value then
+          Rayfield:Notify({
+             Title = "TriggerBot 有効",
+             Content = "敵を見るだけで自動射撃！",
+             Duration = 3,
+             Image = 4483362458,
+          })
+      end
    end,
 })
 
+-- ========== 射撃設定タブ ==========
+local AutoShootToggle = ShootTab:CreateToggle({
+   Name = "🔫 自動射撃",
+   CurrentValue = false,
+   Flag = "AutoShootToggle",
+   Callback = function(Value)
+      autoShootEnabled = Value
+      if Value then
+          Rayfield:Notify({
+             Title = "自動射撃 有効",
+             Content = "多層システムで確実に発射！",
+             Duration = 3,
+             Image = 4483362458,
+          })
+      end
+   end,
+})
+
+local AutoEquipToggle = ShootTab:CreateToggle({
+   Name = "🔧 自動武器装備",
+   CurrentValue = false,
+   Flag = "AutoEquipToggle",
+   Callback = function(Value)
+      autoEquipEnabled = Value
+   end,
+})
+
+local ShootDelaySlider = ShootTab:CreateSlider({
+   Name = "射撃間隔 (秒)",
+   Range = {0.01, 0.5},
+   Increment = 0.01,
+   CurrentValue = 0.05,
+   Flag = "ShootDelaySlider",
+   Callback = function(Value)
+      shootDelay = Value
+   end,
+})
+
+local BurstCountSlider = ShootTab:CreateSlider({
+   Name = "バースト弾数",
+   Range = {1, 5},
+   Increment = 1,
+   CurrentValue = 1,
+   Flag = "BurstCountSlider",
+   Callback = function(Value)
+      burstCount = Value
+   end,
+})
+
+local TestShootButton = ShootTab:CreateButton({
+   Name = "🔫 射撃テスト",
+   Callback = function()
+      autoEquipWeapon()
+      local success = shootWeapon()
+      Rayfield:Notify({
+         Title = success and "射撃成功" or "射撃失敗",
+         Content = success and "武器が正常に発射されました" or "武器が見つからないか発射に失敗しました",
+         Duration = 2,
+         Image = 4483362458,
+      })
+   end,
+})
+
+-- ========== 視覚タブ ==========
 local CircleToggle = VisualTab:CreateToggle({
    Name = "中央に虹色の円",
    CurrentValue = false,
@@ -501,45 +663,14 @@ local FlySpeedSlider = MovementTab:CreateSlider({
    end,
 })
 
--- ========== その他タブ ==========
-local ResetButton = UtilityTab:CreateButton({
-   Name = "設定をリセット",
-   Callback = function()
-      silentAimEnabled = false
-      softAimEnabled = false
-      autoAimEnabled = false
-      autoShootEnabled = false
-      espEnabled = false
-      flyEnabled = false
-      circleEnabled = false
-      magicCircleEnabled = false
-      
-      SilentAimToggle:Set(false)
-      SoftAimToggle:Set(false)
-      AutoAimToggle:Set(false)
-      AutoShootToggle:Set(false)
-      ESPToggle:Set(false)
-      FlyToggle:Set(false)
-      CircleToggle:Set(false)
-      MagicCircleToggle:Set(false)
-      
-      toggleFly()
-      
-      Rayfield:Notify({
-         Title = "リセット完了",
-         Content = "すべての機能がオフになりました",
-         Duration = 3,
-         Image = 4483362458,
-      })
-   end,
-})
-
 -- ========== 起動通知 ==========
 Rayfield:Notify({
-   Title = "スクリプト読み込み完了",
-   Content = "暗殺者対保安官2 メニュー by @syu_u0316",
+   Title = "スクリプト読み込み完了 v2",
+   Content = "ESP削除 & 自動射撃超強化版 by @syu_u0316",
    Duration = 5,
    Image = 4483362458,
 })
 
-print("暗殺者対保安官2 スクリプト読み込み完了！")
+print("暗殺者対保安官2 v2 スクリプト読み込み完了！")
+print("ESP機能: 完全削除 (BAN回避)")
+print("自動射撃: 多層システム実装")
