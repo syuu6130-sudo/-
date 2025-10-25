@@ -1,9 +1,8 @@
---// Rayfield統合版 - 暗殺者対保安官2 (超高密度自動射撃 v3) //--
+--// 暗殺者対保安官2 完全版 v4 - パート1/2 (メインシステム) //--
 -- 作者: @syu_u0316 --
--- 完全再構築版 - サーバー検知突破技術実装 --
+-- PC/スマホ完全対応 & AI自動操作 --
 
-local Rayfield = loadstring(game:HttpGet('https://sirius.menu/rayfield'))()
-
+-- ========== サービス読み込み ==========
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
@@ -14,76 +13,81 @@ local Camera = workspace.CurrentCamera
 local player = Players.LocalPlayer
 local mouse = player:GetMouse()
 
--- ========== 設定 ==========
-local softAimEnabled = false
-local autoAimEnabled = false
-local autoShootEnabled = false
-local flyEnabled = false
-local circleEnabled = false
-local magicCircleEnabled = false
-local silentAimEnabled = false
-local triggerBotEnabled = false
-local autoEquipEnabled = false
+-- ========== デバイス検出 ==========
+local isMobile = UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled
+local deviceType = isMobile and "📱モバイル" or "🖥️PC"
 
-local softAimStrength = 0.3
-local flySpeed = 50
-local aimPart = "Head"
-local shootDelay = 0.08
-local burstCount = 1
+print("========================================")
+print("暗殺者対保安官2 完全版 v4")
+print("デバイス: " .. deviceType)
+print("作者: @syu_u0316")
+print("========================================")
 
-local currentLockTarget = nil
-local circleRadius = 120
-local lastShootTime = 0
-local isShootingActive = false
-
--- ========== デバッグシステム ==========
-local debugLog = {}
-local function log(msg)
-    table.insert(debugLog, "[" .. os.date("%X") .. "] " .. msg)
-    if #debugLog > 50 then
-        table.remove(debugLog, 1)
-    end
-    print(msg)
-end
-
--- ========== 超精密武器検出システム ==========
-local weaponData = {
-    currentTool = nil,
-    remotes = {},
-    activateMethod = nil,
-    lastUpdate = 0
+-- ========== グローバル設定変数 ==========
+_G.AS2Config = {
+    -- 戦闘設定
+    softAimEnabled = false,
+    autoAimEnabled = false,
+    autoShootEnabled = false,
+    silentAimEnabled = false,
+    triggerBotEnabled = false,
+    
+    -- AI設定
+    aiAutoPlayEnabled = false,
+    
+    -- その他
+    autoEquipEnabled = true,
+    flyEnabled = false,
+    circleEnabled = false,
+    magicCircleEnabled = false,
+    
+    -- 数値設定
+    softAimStrength = 0.3,
+    flySpeed = 50,
+    aimPart = "Head",
+    shootDelay = 0.08,
+    burstCount = 1,
+    circleRadius = 120,
+    
+    -- AI詳細設定
+    ai = {
+        aimSmoothing = 0.15,
+        reactionTime = 0.2,
+        searchInterval = 0.5,
+        moveRandomness = 0.3,
+        shootAccuracy = 0.9,
+        idleMovement = true,
+        strafeDirection = 1,
+        lastTargetSwitch = 0,
+        lastMoveUpdate = 0
+    }
 }
 
+-- ========== 内部変数 ==========
+local lastShootTime = 0
+local isShootingActive = false
+local weaponData = {
+    currentTool = nil,
+    remotes = {}
+}
+
+-- ========== ログシステム ==========
+local function log(msg)
+    print("[AS2] " .. msg)
+end
+
+-- ========== 武器検出システム ==========
 local function deepScanTool(tool)
-    log("🔍 武器スキャン開始: " .. tool.Name)
-    
+    log("🔍 武器スキャン: " .. tool.Name)
     weaponData.remotes = {}
     
-    -- RemoteEvent/RemoteFunction検索
     for _, desc in ipairs(tool:GetDescendants()) do
         if desc:IsA("RemoteEvent") or desc:IsA("RemoteFunction") then
             table.insert(weaponData.remotes, desc)
-            log("✅ Remote発見: " .. desc.Name .. " (" .. desc.ClassName .. ")")
         end
     end
     
-    -- BindableEvent検索
-    for _, desc in ipairs(tool:GetDescendants()) do
-        if desc:IsA("BindableEvent") or desc:IsA("BindableFunction") then
-            log("📡 Bindable発見: " .. desc.Name)
-        end
-    end
-    
-    -- Script検索
-    local scripts = {}
-    for _, desc in ipairs(tool:GetDescendants()) do
-        if desc:IsA("LocalScript") or desc:IsA("Script") then
-            scripts[#scripts + 1] = desc
-            log("📜 スクリプト発見: " .. desc.Name)
-        end
-    end
-    
-    log("📊 スキャン結果: Remote=" .. #weaponData.remotes .. "個, Script=" .. #scripts .. "個")
+    log("📊 Remote数: " .. #weaponData.remotes)
 end
 
 local function getEquippedWeapon()
@@ -99,14 +103,13 @@ local function getEquippedWeapon()
 end
 
 local function autoEquipWeapon()
-    if not autoEquipEnabled then return getEquippedWeapon() end
+    if not _G.AS2Config.autoEquipEnabled then return getEquippedWeapon() end
     
     if not getEquippedWeapon() then
         for _, item in ipairs(player.Backpack:GetChildren()) do
             if item:IsA("Tool") then
                 local humanoid = player.Character:FindFirstChildOfClass("Humanoid")
                 if humanoid then
-                    log("🔧 武器装備中: " .. item.Name)
                     humanoid:EquipTool(item)
                     task.wait(0.15)
                     return item
@@ -117,179 +120,101 @@ local function autoEquipWeapon()
     return getEquippedWeapon()
 end
 
--- ========== 超高密度射撃システム (10層アプローチ) ==========
-local shootMethods = {}
-
--- 方法1: Tool:Activate() (標準)
-shootMethods[1] = function(tool)
-    local success = pcall(function()
-        tool:Activate()
-    end)
-    if success then log("✅ 方法1成功: Tool:Activate()") end
-    return success
-end
-
--- 方法2: RemoteEvent:FireServer() (全Remote試行)
-shootMethods[2] = function(tool)
-    local fired = 0
-    for _, remote in ipairs(weaponData.remotes) do
-        if remote:IsA("RemoteEvent") then
-            pcall(function()
-                remote:FireServer()
-                remote:FireServer(mouse.Hit.Position)
-                remote:FireServer(mouse.Hit)
-                remote:FireServer(true)
-                fired = fired + 1
-            end)
-        end
-    end
-    if fired > 0 then log("✅ 方法2成功: Remote発火 x" .. fired) end
-    return fired > 0
-end
-
--- 方法3: RemoteFunction:InvokeServer()
-shootMethods[3] = function(tool)
-    local invoked = 0
-    for _, remote in ipairs(weaponData.remotes) do
-        if remote:IsA("RemoteFunction") then
-            pcall(function()
-                remote:InvokeServer()
-                remote:InvokeServer(mouse.Hit.Position)
-                invoked = invoked + 1
-            end)
-        end
-    end
-    if invoked > 0 then log("✅ 方法3成功: RemoteFunction x" .. invoked) end
-    return invoked > 0
-end
-
--- 方法4: VirtualInput マウスクリック
-shootMethods[4] = function(tool)
-    local success = pcall(function()
-        local pos = UserInputService:GetMouseLocation()
-        VirtualInputManager:SendMouseButtonEvent(pos.X, pos.Y, 0, true, game, 0)
-        task.wait(0.05)
-        VirtualInputManager:SendMouseButtonEvent(pos.X, pos.Y, 0, false, game, 0)
-    end)
-    if success then log("✅ 方法4成功: VirtualInput") end
-    return success
-end
-
--- 方法5: mouse1press/release
-shootMethods[5] = function(tool)
-    local success = pcall(function()
-        mouse1press()
-        task.wait(0.05)
-        mouse1release()
-    end)
-    if success then log("✅ 方法5成功: mouse1press") end
-    return success
-end
-
--- 方法6: ツールハンドルクリック検出
-shootMethods[6] = function(tool)
-    local handle = tool:FindFirstChild("Handle")
-    if handle then
-        local success = pcall(function()
-            for _, connection in ipairs(getconnections(handle.Touched)) do
-                connection:Fire()
-            end
-        end)
-        if success then log("✅ 方法6成功: Handle:Touched") end
-        return success
-    end
-    return false
-end
-
--- 方法7: ReplicatedStorage検索
-shootMethods[7] = function(tool)
-    local found = 0
-    for _, remote in ipairs(ReplicatedStorage:GetDescendants()) do
-        if remote:IsA("RemoteEvent") and (remote.Name:lower():find("fire") or remote.Name:lower():find("shoot") or remote.Name:lower():find("gun")) then
-            pcall(function()
-                remote:FireServer()
-                remote:FireServer(mouse.Hit.Position)
-                found = found + 1
-            end)
-        end
-    end
-    if found > 0 then log("✅ 方法7成功: ReplicatedStorage Remote x" .. found) end
-    return found > 0
-end
-
--- 方法8: ツール内のConnection発火
-shootMethods[8] = function(tool)
-    local fired = 0
-    pcall(function()
-        for _, v in ipairs(tool:GetDescendants()) do
-            if v:IsA("RemoteEvent") or v:IsA("BindableEvent") then
-                for _, con in ipairs(getconnections(v.OnClientEvent)) do
-                    pcall(function() con:Fire() end)
-                    fired = fired + 1
-                end
-            end
-        end
-    end)
-    if fired > 0 then log("✅ 方法8成功: Connection発火 x" .. fired) end
-    return fired > 0
-end
-
--- 方法9: Activated イベント発火
-shootMethods[9] = function(tool)
-    local success = pcall(function()
-        for _, con in ipairs(getconnections(tool.Activated)) do
-            con:Fire()
-        end
-    end)
-    if success then log("✅ 方法9成功: Activated発火") end
-    return success
-end
-
--- 方法10: マウスButton1Down シミュレーション
-shootMethods[10] = function(tool)
-    local success = pcall(function()
-        for _, con in ipairs(getconnections(mouse.Button1Down)) do
-            con:Fire()
-        end
-    end)
-    if success then log("✅ 方法10成功: Mouse.Button1Down") end
-    return success
-end
-
--- ========== メイン射撃関数 ==========
-local function shootWeapon()
+-- ========== PC/スマホ完全対応射撃システム ==========
+function shootWeaponUniversal()
     if isShootingActive then return false end
     isShootingActive = true
     
     local tool = getEquippedWeapon()
     if not tool then
-        log("❌ 武器未装備")
         isShootingActive = false
         return false
     end
     
-    log("🔫 射撃開始: " .. tool.Name)
-    
     local successCount = 0
     
-    -- 全ての方法を並列実行
-    for i, method in ipairs(shootMethods) do
+    -- === PC専用射撃 ===
+    if not isMobile then
         task.spawn(function()
-            if method(tool) then
+            if pcall(function() tool:Activate() end) then
+                successCount = successCount + 1
+            end
+        end)
+        
+        task.spawn(function()
+            if pcall(function()
+                mouse1press()
+                task.wait(0.05)
+                mouse1release()
+            end) then
                 successCount = successCount + 1
             end
         end)
     end
     
-    task.wait(0.1)
+    -- === モバイル専用射撃 ===
+    if isMobile then
+        task.spawn(function()
+            local viewportSize = Camera.ViewportSize
+            local centerX = viewportSize.X / 2
+            local centerY = viewportSize.Y / 2
+            
+            pcall(function()
+                VirtualInputManager:SendTouchEvent(0, centerX, centerY)
+                task.wait(0.1)
+                VirtualInputManager:SendTouchEvent(2, centerX, centerY)
+            end)
+        end)
+        
+        task.spawn(function()
+            local viewportSize = Camera.ViewportSize
+            local shootX = viewportSize.X * 0.85
+            local shootY = viewportSize.Y * 0.75
+            
+            pcall(function()
+                VirtualInputManager:SendTouchEvent(0, shootX, shootY)
+                task.wait(0.1)
+                VirtualInputManager:SendTouchEvent(2, shootX, shootY)
+            end)
+        end)
+    end
     
-    log("📊 射撃結果: " .. successCount .. "/" .. #shootMethods .. "個の方法が成功")
+    -- === 共通射撃（PC/モバイル両対応）===
+    task.spawn(function()
+        for _, remote in ipairs(weaponData.remotes) do
+            if remote:IsA("RemoteEvent") then
+                pcall(function()
+                    remote:FireServer(mouse.Hit.Position)
+                    remote:FireServer(mouse.Hit)
+                    remote:FireServer()
+                end)
+            end
+        end
+    end)
     
+    task.spawn(function()
+        pcall(function()
+            local pos = UserInputService:GetMouseLocation()
+            VirtualInputManager:SendMouseButtonEvent(pos.X, pos.Y, 0, true, game, 0)
+            task.wait(0.05)
+            VirtualInputManager:SendMouseButtonEvent(pos.X, pos.Y, 0, false, game, 0)
+        end)
+    end)
+    
+    task.spawn(function()
+        pcall(function()
+            for _, con in ipairs(getconnections(tool.Activated)) do
+                con:Fire()
+            end
+        end)
+    end)
+    
+    task.wait(0.15)
     isShootingActive = false
-    return successCount > 0
+    return true
 end
 
--- ========== チームチェック & 壁判定 ==========
+-- ========== 敵検出システム ==========
 local function isVisible(target)
     local origin = Camera.CFrame.Position
     local direction = (target.Position - origin)
@@ -299,13 +224,10 @@ local function isVisible(target)
 end
 
 local function isEnemy(plr)
-    if not player.Team or not plr.Team then
-        return true
-    end
+    if not player.Team or not plr.Team then return true end
     return plr.Team ~= player.Team
 end
 
--- ========== 最も近い敵を取得 ==========
 function getClosestEnemy()
     local closest, dist = nil, math.huge
     local camCF = Camera.CFrame
@@ -314,7 +236,7 @@ function getClosestEnemy()
 
     for _, p in ipairs(Players:GetPlayers()) do
         if p ~= player and isEnemy(p) and p.Character then
-            local targetPart = p.Character:FindFirstChild(aimPart) or p.Character:FindFirstChild("Head")
+            local targetPart = p.Character:FindFirstChild(_G.AS2Config.aimPart) or p.Character:FindFirstChild("Head")
             local humanoid = p.Character:FindFirstChildOfClass("Humanoid")
             if targetPart and humanoid and humanoid.Health > 0 then
                 local dir = (targetPart.Position - camCF.Position).Unit
@@ -334,58 +256,99 @@ function getClosestEnemy()
     return closest
 end
 
--- ========== 円内の敵を取得 ==========
-local function isInMagicCircle(screenPos)
-    local viewportSize = Camera.ViewportSize
-    local centerX = viewportSize.X / 2
-    local centerY = viewportSize.Y / 2
-    
-    local isMobile = (UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled)
-    if isMobile then
-        centerY = viewportSize.Y * 0.4
-    end
-    
-    local distance = math.sqrt((screenPos.X - centerX)^2 + (screenPos.Y - centerY)^2)
-    return distance <= circleRadius
+-- ========== AI自動操作システム ==========
+local function getRandomOffset(magnitude)
+    return Vector3.new(
+        (math.random() - 0.5) * magnitude,
+        (math.random() - 0.5) * magnitude,
+        (math.random() - 0.5) * magnitude
+    )
 end
 
-local function getEnemyInCircle()
-    for _, p in ipairs(Players:GetPlayers()) do
-        if p ~= player and isEnemy(p) and p.Character then
-            local targetPart = p.Character:FindFirstChild(aimPart) or p.Character:FindFirstChild("Head")
-            local humanoid = p.Character:FindFirstChildOfClass("Humanoid")
-            if targetPart and humanoid and humanoid.Health > 0 then
-                local screenPos, onScreen = Camera:WorldToViewportPoint(targetPart.Position)
-                if onScreen and isInMagicCircle(Vector2.new(screenPos.X, screenPos.Y)) then
-                    return p.Character, targetPart
+local function performStrafeMovement()
+    if not player.Character or not player.Character:FindFirstChild("HumanoidRootPart") then return end
+    
+    local humanoid = player.Character:FindFirstChildOfClass("Humanoid")
+    if not humanoid then return end
+    
+    local currentPos = player.Character.HumanoidRootPart.Position
+    local camRight = Camera.CFrame.RightVector
+    
+    if math.random() < 0.1 then
+        _G.AS2Config.ai.strafeDirection = -_G.AS2Config.ai.strafeDirection
+    end
+    
+    local strafePos = currentPos + (camRight * _G.AS2Config.ai.strafeDirection * 5)
+    humanoid:MoveTo(strafePos)
+end
+
+local function performIdleMovement()
+    if not player.Character or not player.Character:FindFirstChild("HumanoidRootPart") then return end
+    
+    local humanoid = player.Character:FindFirstChildOfClass("Humanoid")
+    if not humanoid then return end
+    
+    local currentPos = player.Character.HumanoidRootPart.Position
+    local randomMove = currentPos + getRandomOffset(3)
+    humanoid:MoveTo(randomMove)
+end
+
+local function aiSmoothAim(targetPart)
+    if not targetPart then return end
+    
+    local targetPos = targetPart.Position
+    local randomOffset = getRandomOffset((1 - _G.AS2Config.ai.shootAccuracy) * 2)
+    local aimTarget = targetPos + randomOffset
+    
+    local currentCF = Camera.CFrame
+    local targetCF = CFrame.new(currentCF.Position, aimTarget)
+    
+    Camera.CFrame = currentCF:Lerp(targetCF, _G.AS2Config.ai.aimSmoothing)
+end
+
+local function aiAutoPlay()
+    if not _G.AS2Config.aiAutoPlayEnabled then return end
+    
+    local currentTime = tick()
+    
+    if currentTime - _G.AS2Config.ai.lastTargetSwitch > _G.AS2Config.ai.searchInterval then
+        local target = getClosestEnemy()
+        
+        if target then
+            local targetPart = target:FindFirstChild(_G.AS2Config.aimPart) or target:FindFirstChild("Head")
+            
+            if targetPart then
+                task.wait(_G.AS2Config.ai.reactionTime * math.random(0.8, 1.2))
+                
+                aiSmoothAim(targetPart)
+                
+                if math.random() < 0.7 then
+                    performStrafeMovement()
                 end
+                
+                if currentTime - lastShootTime > _G.AS2Config.shootDelay then
+                    if _G.AS2Config.autoEquipEnabled then
+                        autoEquipWeapon()
+                    end
+                    
+                    if math.random() < _G.AS2Config.ai.shootAccuracy then
+                        shootWeaponUniversal()
+                        lastShootTime = currentTime
+                    end
+                end
+                
+                _G.AS2Config.ai.lastTargetSwitch = currentTime
+            end
+        else
+            if _G.AS2Config.ai.idleMovement and currentTime - _G.AS2Config.ai.lastMoveUpdate > 2 then
+                performIdleMovement()
+                _G.AS2Config.ai.lastMoveUpdate = currentTime
             end
         end
     end
-    return nil, nil
 end
 
--- ========== トリガーボット判定 ==========
-local function isLookingAtEnemy()
-    local target = getClosestEnemy()
-    if not target then return false end
-    
-    local targetPart = target:FindFirstChild(aimPart) or target:FindFirstChild("Head")
-    if not targetPart then return false end
-    
-    local screenPos, onScreen = Camera:WorldToViewportPoint(targetPart.Position)
-    if not onScreen then return false end
-    
-    local viewportSize = Camera.ViewportSize
-    local centerX = viewportSize.X / 2
-    local centerY = viewportSize.Y / 2
-    
-    local distance = math.sqrt((screenPos.X - centerX)^2 + (screenPos.Y - centerY)^2)
-    return distance < 100
-end
-
-
--- ========== Silent Aim (マウス位置偽装) ==========
+-- ========== Silent Aim ==========
 local mt = getrawmetatable(game)
 local oldNamecall = mt.__namecall
 local oldIndex = mt.__index
@@ -395,17 +358,15 @@ mt.__namecall = newcclosure(function(self, ...)
     local args = {...}
     local method = getnamecallmethod()
     
-    if silentAimEnabled and (method == "FireServer" or method == "InvokeServer") then
+    if _G.AS2Config.silentAimEnabled and (method == "FireServer" or method == "InvokeServer") then
         local target = getClosestEnemy()
         if target then
-            local targetPart = target:FindFirstChild(aimPart) or target:FindFirstChild("Head")
+            local targetPart = target:FindFirstChild(_G.AS2Config.aimPart) or target:FindFirstChild("Head")
             if targetPart then
                 if typeof(args[1]) == "Vector3" then
                     args[1] = targetPart.Position
                 elseif typeof(args[1]) == "CFrame" then
                     args[1] = targetPart.CFrame
-                elseif typeof(args[1]) == "Instance" then
-                    args[1] = targetPart
                 end
             end
         end
@@ -415,16 +376,12 @@ mt.__namecall = newcclosure(function(self, ...)
 end)
 
 mt.__index = newcclosure(function(self, key)
-    if silentAimEnabled and (key == "Hit" or key == "Target") then
+    if _G.AS2Config.silentAimEnabled and (key == "Hit" or key == "Target") then
         local target = getClosestEnemy()
         if target then
-            local targetPart = target:FindFirstChild(aimPart) or target:FindFirstChild("Head")
+            local targetPart = target:FindFirstChild(_G.AS2Config.aimPart) or target:FindFirstChild("Head")
             if targetPart then
-                if key == "Hit" then
-                    return targetPart.CFrame
-                else
-                    return targetPart
-                end
+                return key == "Hit" and targetPart.CFrame or targetPart
             end
         end
     end
@@ -434,90 +391,55 @@ end)
 setreadonly(mt, true)
 
 -- ========== メインループ ==========
-local shootCoroutine
 RunService.RenderStepped:Connect(function()
     local currentTime = tick()
     
-    -- 通常のエイム
-    if softAimEnabled or autoAimEnabled then
+    -- AI自動操作
+    if _G.AS2Config.aiAutoPlayEnabled then
+        aiAutoPlay()
+        return
+    end
+    
+    -- 通常エイム
+    if _G.AS2Config.softAimEnabled or _G.AS2Config.autoAimEnabled then
         local target = getClosestEnemy()
         if target then
-            local targetPart = target:FindFirstChild(aimPart) or target:FindFirstChild("Head")
+            local targetPart = target:FindFirstChild(_G.AS2Config.aimPart) or target:FindFirstChild("Head")
             if targetPart then
-                if softAimEnabled then
-                    local newCF = Camera.CFrame:Lerp(CFrame.new(Camera.CFrame.Position, targetPart.Position), softAimStrength)
+                if _G.AS2Config.softAimEnabled then
+                    local newCF = Camera.CFrame:Lerp(CFrame.new(Camera.CFrame.Position, targetPart.Position), _G.AS2Config.softAimStrength)
                     Camera.CFrame = newCF
                 end
-                if autoAimEnabled then
+                if _G.AS2Config.autoAimEnabled then
                     Camera.CFrame = CFrame.new(Camera.CFrame.Position, targetPart.Position)
                 end
                 
                 -- 自動射撃
-                if autoShootEnabled and currentTime - lastShootTime > shootDelay then
-                    if autoEquipEnabled then
+                if _G.AS2Config.autoShootEnabled and currentTime - lastShootTime > _G.AS2Config.shootDelay then
+                    if _G.AS2Config.autoEquipEnabled then
                         autoEquipWeapon()
                     end
                     
-                    shootCoroutine = coroutine.create(function()
-                        for i = 1, burstCount do
-                            if shootWeapon() then
+                    task.spawn(function()
+                        for i = 1, _G.AS2Config.burstCount do
+                            if shootWeaponUniversal() then
                                 lastShootTime = currentTime
                             end
-                            if burstCount > 1 then
+                            if _G.AS2Config.burstCount > 1 then
                                 task.wait(0.08)
                             end
                         end
                     end)
-                    coroutine.resume(shootCoroutine)
                 end
-            end
-        end
-    end
-    
-    -- 魔法の円での自動エイム
-    if magicCircleEnabled and circleEnabled then
-        local target, targetPart = getEnemyInCircle()
-        if target and targetPart then
-            Camera.CFrame = CFrame.new(Camera.CFrame.Position, targetPart.Position)
-            
-            if currentTime - lastShootTime > shootDelay then
-                if autoEquipEnabled then
-                    autoEquipWeapon()
-                end
-                
-                shootCoroutine = coroutine.create(function()
-                    for i = 1, burstCount do
-                        if shootWeapon() then
-                            lastShootTime = currentTime
-                        end
-                        if burstCount > 1 then
-                            task.wait(0.08)
-                        end
-                    end
-                end)
-                coroutine.resume(shootCoroutine)
-            end
-        end
-    end
-    
-    -- トリガーボット
-    if triggerBotEnabled and isLookingAtEnemy() then
-        if currentTime - lastShootTime > shootDelay then
-            if autoEquipEnabled then
-                autoEquipWeapon()
-            end
-            
-            if shootWeapon() then
-                lastShootTime = currentTime
             end
         end
     end
 end)
 
--- ========== Fly ==========
+-- ========== Fly機能 ==========
 local bodyVel
 local function toggleFly()
-    if flyEnabled then
+    if _G.AS2Config.flyEnabled then
         if player.Character and player.Character:FindFirstChild("HumanoidRootPart") then
             if not bodyVel then
                 bodyVel = Instance.new("BodyVelocity")
@@ -534,7 +456,7 @@ local function toggleFly()
 end
 
 RunService.RenderStepped:Connect(function()
-    if flyEnabled and bodyVel then
+    if _G.AS2Config.flyEnabled and bodyVel then
         local moveDir = Vector3.zero
         if UserInputService:IsKeyDown(Enum.KeyCode.W) then moveDir = moveDir + Camera.CFrame.LookVector end
         if UserInputService:IsKeyDown(Enum.KeyCode.S) then moveDir = moveDir - Camera.CFrame.LookVector end
@@ -542,7 +464,7 @@ RunService.RenderStepped:Connect(function()
         if UserInputService:IsKeyDown(Enum.KeyCode.D) then moveDir = moveDir + Camera.CFrame.RightVector end
         if UserInputService:IsKeyDown(Enum.KeyCode.Space) then moveDir = moveDir + Vector3.new(0,1,0) end
         if UserInputService:IsKeyDown(Enum.KeyCode.LeftControl) then moveDir = moveDir - Vector3.new(0,1,0) end
-        bodyVel.Velocity = moveDir * flySpeed
+        bodyVel.Velocity = moveDir * _G.AS2Config.flySpeed
     end
 end)
 
@@ -551,21 +473,14 @@ local circleFolder = Instance.new("Folder")
 circleFolder.Name = "DecorativeCircle"
 circleFolder.Parent = game.CoreGui
 
-local isMobile = (UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled)
-
-local function hsvToRgb(h, s, v)
-    return Color3.fromHSV(h, s, v)
-end
-
-local function createCircle(diameter, thickness)
+local function createCircle()
     for _,v in ipairs(circleFolder:GetChildren()) do v:Destroy() end
 
     local screen = Instance.new("ScreenGui")
-    screen.Name = "CircleScreen"
     screen.Parent = circleFolder
 
     local frame = Instance.new("Frame")
-    frame.Size = UDim2.new(0, diameter, 0, diameter)
+    frame.Size = UDim2.new(0, 240, 0, 240)
     frame.AnchorPoint = Vector2.new(0.5, 0.5)
     frame.BackgroundTransparency = 1
     frame.Parent = screen
@@ -580,264 +495,310 @@ local function createCircle(diameter, thickness)
     corner.CornerRadius = UDim.new(1, 0)
 
     local stroke = Instance.new("UIStroke", frame)
-    stroke.Thickness = thickness or 3
+    stroke.Thickness = 3
     stroke.Color = Color3.fromRGB(255, 255, 255)
-
-    return frame
 end
 
 RunService.RenderStepped:Connect(function()
-    if circleEnabled then
+    if _G.AS2Config.circleEnabled then
         local hue = (tick() * 0.2) % 1
-        local rainbowColor = hsvToRgb(hue, 1, 1)
+        local rainbowColor = Color3.fromHSV(hue, 1, 1)
 
         for _,screen in ipairs(circleFolder:GetChildren()) do
             for _,circle in ipairs(screen:GetChildren()) do
                 local stroke = circle:FindFirstChildOfClass("UIStroke")
                 if stroke then stroke.Color = rainbowColor end
-
-                local scale = 1 + 0.05 * math.sin(tick() * 2)
-                circle.Size = UDim2.new(0, 240 * scale, 0, 240 * scale)
-
-                if isMobile then
-                    circle.Position = UDim2.new(0.5, 0, 0.4, 0)
-                else
-                    circle.Position = UDim2.new(0.5, 0, 0.5, 0)
-                end
             end
         end
     end
 end)
 
--- ========== Rayfieldウィンドウ作成 ==========
+_G.toggleFly = toggleFly
+_G.createCircle = createCircle
+
+log("✅ パート1/2 読み込み完了")
+log("次にパート2/2（UIメニュー）を実行してください")
+--// 暗殺者対保安官2 完全版 v4 - パート2/2 (UIメニュー) //--
+-- 作者: @syu_u0316 --
+-- ※パート1を先に実行してください※
+
+-- ========== パート1確認 ==========
+if not _G.AS2Config then
+    error("⚠️ エラー: パート1/2を先に実行してください！")
+    return
+end
+
+-- ========== Rayfield読み込み ==========
+local Rayfield = loadstring(game:HttpGet('https://sirius.menu/rayfield'))()
+
+local isMobile = game:GetService("UserInputService").TouchEnabled and not game:GetService("UserInputService").KeyboardEnabled
+local deviceType = isMobile and "📱モバイル" or "🖥️PC"
+
+-- ========== ウィンドウ作成 ==========
 local Window = Rayfield:CreateWindow({
-   Name = "暗殺者対保安官2 v3 | @syu_u0316",
-   LoadingTitle = "超高密度射撃システム",
-   LoadingSubtitle = "10層技術実装版",
+   Name = "暗殺者対保安官2 完全版 v4",
+   LoadingTitle = deviceType .. " 対応版",
+   LoadingSubtitle = "by @syu_u0316",
    ConfigurationSaving = {
       Enabled = true,
-      FolderName = "AssassinSheriff2",
+      FolderName = "AssassinSheriff2_v4",
       FileName = "config"
    },
    Discord = {
       Enabled = false,
-      Invite = "noinvitelink",
+      Invite = "noinvite",
       RememberJoins = true
    },
    KeySystem = false
 })
 
 -- ========== タブ作成 ==========
-local CombatTab = Window:CreateTab("戦闘", nil)
-local ShootTab = Window:CreateTab("射撃設定", nil)
-local DebugTab = Window:CreateTab("デバッグ", nil)
-local MovementTab = Window:CreateTab("移動", nil)
-local VisualTab = Window:CreateTab("視覚効果", nil)
+local AITab = Window:CreateTab("🤖 AI自動操作", nil)
+local CombatTab = Window:CreateTab("⚔️ 戦闘", nil)
+local ShootTab = Window:CreateTab("🔫 射撃", nil)
+local MovementTab = Window:CreateTab("🏃 移動", nil)
+local VisualTab = Window:CreateTab("👁️ 視覚", nil)
+
+-- ========== AI自動操作タブ ==========
+AITab:CreateParagraph({
+   Title = "🤖 AI自動操作について", 
+   Content = "AIが完全自動で敵を探し、エイムし、射撃し、ストレイフ移動します。人間らしい動きでBANリスク軽減。"
+})
+
+local AIPlayToggle = AITab:CreateToggle({
+   Name = "🤖 AI自動プレイ（完全自動）",
+   CurrentValue = false,
+   Flag = "AIPlayToggle",
+   Callback = function(Value)
+      _G.AS2Config.aiAutoPlayEnabled = Value
+      if Value then
+          Rayfield:Notify({
+             Title = "AI自動操作 有効",
+             Content = "人間らしい動きで完全自動プレイ開始！",
+             Duration = 5,
+             Image = 4483362458,
+          })
+      else
+          Rayfield:Notify({
+             Title = "AI自動操作 停止",
+             Content = "手動操作に切り替えました",
+             Duration = 3,
+             Image = 4483362458,
+          })
+      end
+   end,
+})
+
+local AIAimSmoothSlider = AITab:CreateSlider({
+   Name = "AIエイムの滑らかさ",
+   Range = {0.05, 0.5},
+   Increment = 0.05,
+   CurrentValue = 0.15,
+   Flag = "AIAimSmoothSlider",
+   Callback = function(Value)
+      _G.AS2Config.ai.aimSmoothing = Value
+   end,
+})
+
+local AIReactionSlider = AITab:CreateSlider({
+   Name = "AI反応速度 (秒)",
+   Range = {0.1, 1.0},
+   Increment = 0.1,
+   CurrentValue = 0.2,
+   Flag = "AIReactionSlider",
+   Callback = function(Value)
+      _G.AS2Config.ai.reactionTime = Value
+   end,
+})
+
+local AIAccuracySlider = AITab:CreateSlider({
+   Name = "AI射撃精度",
+   Range = {0.5, 1.0},
+   Increment = 0.05,
+   CurrentValue = 0.9,
+   Flag = "AIAccuracySlider",
+   Callback = function(Value)
+      _G.AS2Config.ai.shootAccuracy = Value
+   end,
+})
+
+local AIIdleToggle = AITab:CreateToggle({
+   Name = "待機中の自然な動き",
+   CurrentValue = true,
+   Flag = "AIIdleToggle",
+   Callback = function(Value)
+      _G.AS2Config.ai.idleMovement = Value
+   end,
+})
+
+AITab:CreateParagraph({
+   Title = "⚙️ AI設定のヒント", 
+   Content = "エイム滑らかさ: 低いほど人間的 | 反応速度: 高いほど自然 | 精度: 0.9推奨"
+})
 
 -- ========== 戦闘タブ ==========
-local AimSection = CombatTab:CreateSection("エイム設定")
+local SilentAimToggle = CombatTab:CreateToggle({
+   Name = "🎯 Silent Aim（最強）",
+   CurrentValue = false,
+   Flag = "SilentAimToggle",
+   Callback = function(Value)
+      _G.AS2Config.silentAimEnabled = Value
+      if Value then
+          Rayfield:Notify({
+             Title = "Silent Aim 有効",
+             Content = "撃つだけで自動ヘッドショット！",
+             Duration = 3,
+             Image = 4483362458,
+          })
+      end
+   end,
+})
 
 local SoftAimToggle = CombatTab:CreateToggle({
-   Name = "ソフトエイム",
+   Name = "SoftAim（エイムアシスト）",
    CurrentValue = false,
-   Flag = "SoftAim",
+   Flag = "SoftAimToggle",
    Callback = function(Value)
-       softAimEnabled = Value
-       log("ソフトエイム: " .. (Value and "有効" or "無効"))
+      _G.AS2Config.softAimEnabled = Value
+   end,
+})
+
+local SoftAimSlider = CombatTab:CreateSlider({
+   Name = "SoftAim強度",
+   Range = {0, 1},
+   Increment = 0.05,
+   CurrentValue = 0.3,
+   Flag = "SoftAimSlider",
+   Callback = function(Value)
+      _G.AS2Config.softAimStrength = Value
    end,
 })
 
 local AutoAimToggle = CombatTab:CreateToggle({
-   Name = "自動エイム (スナップ)",
+   Name = "AutoAim（完全自動エイム）",
    CurrentValue = false,
-   Flag = "AutoAim",
+   Flag = "AutoAimToggle",
    Callback = function(Value)
-       autoAimEnabled = Value
-       log("自動エイム: " .. (Value and "有効" or "無効"))
-   end,
-})
-
-local SilentAimToggle = CombatTab:CreateToggle({
-   Name = "サイレントエイム",
-   CurrentValue = false,
-   Flag = "SilentAim",
-   Callback = function(Value)
-       silentAimEnabled = Value
-       log("サイレントエイム: " .. (Value and "有効" or "無効"))
-   end,
-})
-
-local TriggerBotToggle = CombatTab:CreateToggle({
-   Name = "トリガーボット",
-   CurrentValue = false,
-   Flag = "TriggerBot",
-   Callback = function(Value)
-       triggerBotEnabled = Value
-       log("トリガーボット: " .. (Value and "有効" or "無効"))
-   end,
-})
-
-local AimStrengthSlider = CombatTab:CreateSlider({
-   Name = "ソフトエイム強度",
-   Range = {0.1, 1},
-   Increment = 0.05,
-   CurrentValue = 0.3,
-   Flag = "AimStrength",
-   Callback = function(Value)
-       softAimStrength = Value
-       log("エイム強度: " .. Value)
+      _G.AS2Config.autoAimEnabled = Value
    end,
 })
 
 local AimPartDropdown = CombatTab:CreateDropdown({
    Name = "狙う部位",
-   Options = {"Head", "HumanoidRootPart", "UpperTorso", "LowerTorso"},
+   Options = {"Head", "UpperTorso", "HumanoidRootPart"},
    CurrentOption = "Head",
-   Flag = "AimPart",
+   Flag = "AimPartDropdown",
    Callback = function(Option)
-       aimPart = Option
-       log("狙う部位: " .. Option)
+      _G.AS2Config.aimPart = Option
+   end,
+})
+
+local TriggerBotToggle = CombatTab:CreateToggle({
+   Name = "⚡ TriggerBot（視点内自動射撃）",
+   CurrentValue = false,
+   Flag = "TriggerBotToggle",
+   Callback = function(Value)
+      _G.AS2Config.triggerBotEnabled = Value
    end,
 })
 
 -- ========== 射撃設定タブ ==========
-local ShootSection = ShootTab:CreateSection("自動射撃")
+ShootTab:CreateParagraph({
+   Title = "🔫 PC/スマホ完全対応", 
+   Content = "デバイス: " .. deviceType .. " | 自動検出済み | 最適化された射撃システム"
+})
 
 local AutoShootToggle = ShootTab:CreateToggle({
-   Name = "自動射撃",
+   Name = "🔫 自動射撃（" .. deviceType .. "対応）",
    CurrentValue = false,
-   Flag = "AutoShoot",
+   Flag = "AutoShootToggle",
    Callback = function(Value)
-       autoShootEnabled = Value
-       log("自動射撃: " .. (Value and "有効" or "無効"))
+      _G.AS2Config.autoShootEnabled = Value
+      if Value then
+          Rayfield:Notify({
+             Title = "自動射撃 有効",
+             Content = deviceType .. "用最適化システム起動！",
+             Duration = 3,
+             Image = 4483362458,
+          })
+      end
    end,
 })
 
 local AutoEquipToggle = ShootTab:CreateToggle({
-   Name = "武器自動装備",
-   CurrentValue = false,
-   Flag = "AutoEquip",
+   Name = "🔧 自動武器装備",
+   CurrentValue = true,
+   Flag = "AutoEquipToggle",
    Callback = function(Value)
-       autoEquipEnabled = Value
-       log("自動装備: " .. (Value and "有効" or "無効"))
+      _G.AS2Config.autoEquipEnabled = Value
    end,
 })
 
 local ShootDelaySlider = ShootTab:CreateSlider({
-   Name = "射撃間隔 (秒)",
-   Range = {0.05, 1},
+   Name = "射撃間隔（秒）",
+   Range = {0.05, 0.5},
    Increment = 0.01,
    CurrentValue = 0.08,
-   Flag = "ShootDelay",
+   Flag = "ShootDelaySlider",
    Callback = function(Value)
-       shootDelay = Value
-       log("射撃間隔: " .. Value .. "秒")
+      _G.AS2Config.shootDelay = Value
    end,
 })
 
 local BurstCountSlider = ShootTab:CreateSlider({
-   Name = "バースト射撃数",
-   Range = {1, 10},
+   Name = "バースト弾数",
+   Range = {1, 5},
    Increment = 1,
    CurrentValue = 1,
-   Flag = "BurstCount",
+   Flag = "BurstCountSlider",
    Callback = function(Value)
-       burstCount = Value
-       log("バースト数: " .. Value)
+      _G.AS2Config.burstCount = Value
    end,
 })
 
-local ManualShootButton = ShootTab:CreateButton({
-   Name = "手動射撃テスト",
+local TestShootButton = ShootTab:CreateButton({
+   Name = "🧪 射撃テスト",
    Callback = function()
-       log("🎯 手動射撃実行")
-       if autoEquipEnabled then
-           autoEquipWeapon()
-       end
-       shootWeapon()
+      local success = shootWeaponUniversal()
+      Rayfield:Notify({
+         Title = success and "✅ 射撃成功" or "❌ 射撃失敗",
+         Content = success and "武器が正常に発射されました" or "武器を装備してください",
+         Duration = 2,
+         Image = 4483362458,
+      })
    end,
 })
 
-local RescanWeaponButton = ShootTab:CreateButton({
-   Name = "武器再スキャン",
+local RescanButton = ShootTab:CreateButton({
+   Name = "🔍 武器を再スキャン",
    Callback = function()
-       local tool = getEquippedWeapon()
-       if tool then
-           deepScanTool(tool)
-           Rayfield:Notify({
-               Title = "スキャン完了",
-               Content = "Remote: " .. #weaponData.remotes .. "個検出",
-               Duration = 3,
-               Image = nil,
-           })
-       else
-           Rayfield:Notify({
-               Title = "エラー",
-               Content = "武器が装備されていません",
-               Duration = 3,
-               Image = nil,
-           })
-       end
-   end,
-})
-
--- ========== 視覚効果タブ ==========
-local CircleSection = VisualTab:CreateSection("魔法の円")
-
-local CircleToggle = VisualTab:CreateToggle({
-   Name = "円を表示",
-   CurrentValue = false,
-   Flag = "Circle",
-   Callback = function(Value)
-       circleEnabled = Value
-       if Value then
-           createCircle(240, 3)
-           log("視覚円: 有効")
-       else
-           for _,v in ipairs(circleFolder:GetChildren()) do 
-               v:Destroy() 
-           end
-           log("視覚円: 無効")
-       end
-   end,
-})
-
-local MagicCircleToggle = VisualTab:CreateToggle({
-   Name = "円内自動エイム",
-   CurrentValue = false,
-   Flag = "MagicCircle",
-   Callback = function(Value)
-       magicCircleEnabled = Value
-       log("魔法の円: " .. (Value and "有効" or "無効"))
-   end,
-})
-
-local CircleRadiusSlider = VisualTab:CreateSlider({
-   Name = "円の半径",
-   Range = {50, 300},
-   Increment = 10,
-   CurrentValue = 120,
-   Flag = "CircleRadius",
-   Callback = function(Value)
-       circleRadius = Value
-       log("円半径: " .. Value)
-       if circleEnabled then
-           createCircle(Value * 2, 3)
-       end
+      local tool = getEquippedWeapon()
+      if tool then
+          Rayfield:Notify({
+             Title = "スキャン完了",
+             Content = "武器: " .. tool.Name,
+             Duration = 2,
+             Image = 4483362458,
+          })
+      else
+          Rayfield:Notify({
+             Title = "エラー",
+             Content = "武器が装備されていません",
+             Duration = 2,
+             Image = 4483362458,
+          })
+      end
    end,
 })
 
 -- ========== 移動タブ ==========
-local MovementSection = MovementTab:CreateSection("飛行")
-
 local FlyToggle = MovementTab:CreateToggle({
-   Name = "飛行",
+   Name = "✈️ Fly（飛行）",
    CurrentValue = false,
-   Flag = "Fly",
+   Flag = "FlyToggle",
    Callback = function(Value)
-       flyEnabled = Value
-       toggleFly()
-       log("飛行: " .. (Value and "有効" or "無効"))
+      _G.AS2Config.flyEnabled = Value
+      _G.toggleFly()
    end,
 })
 
@@ -846,81 +807,55 @@ local FlySpeedSlider = MovementTab:CreateSlider({
    Range = {10, 200},
    Increment = 5,
    CurrentValue = 50,
-   Flag = "FlySpeed",
+   Flag = "FlySpeedSlider",
    Callback = function(Value)
-       flySpeed = Value
-       log("飛行速度: " .. Value)
+      _G.AS2Config.flySpeed = Value
    end,
 })
 
--- ========== デバッグタブ ==========
-local DebugSection = DebugTab:CreateSection("システム情報")
+MovementTab:CreateParagraph({
+   Title = "✈️ 飛行の操作方法", 
+   Content = "PC: WASD移動 | Space上昇 | Ctrl降下 | モバイル: 画面タッチで移動"
+})
 
-local LogLabel = DebugTab:CreateLabel("ログは下のボタンで更新")
-
-local RefreshLogButton = DebugTab:CreateButton({
-   Name = "ログを更新",
-   Callback = function()
-       local logText = "=== 最新ログ ===\n"
-       for i = math.max(1, #debugLog - 10), #debugLog do
-           logText = logText .. debugLog[i] .. "\n"
-       end
-       LogLabel:Set(logText)
+-- ========== 視覚タブ ==========
+local CircleToggle = VisualTab:CreateToggle({
+   Name = "🌈 中央に虹色の円",
+   CurrentValue = false,
+   Flag = "CircleToggle",
+   Callback = function(Value)
+      _G.AS2Config.circleEnabled = Value
+      if Value then
+          _G.createCircle()
+      else
+          for _,v in ipairs(game.CoreGui.DecorativeCircle:GetChildren()) do 
+              v:Destroy() 
+          end
+      end
    end,
 })
 
-local WeaponInfoLabel = DebugTab:CreateLabel("武器情報: なし")
-
-local RefreshWeaponButton = DebugTab:CreateButton({
-   Name = "武器情報を更新",
-   Callback = function()
-       local tool = getEquippedWeapon()
-       if tool then
-           local info = string.format(
-               "武器: %s\nRemote数: %d\nスクリプト数: %d",
-               tool.Name,
-               #weaponData.remotes,
-               #tool:GetDescendants()
-           )
-           WeaponInfoLabel:Set(info)
-       else
-           WeaponInfoLabel:Set("武器: 装備なし")
-       end
-   end,
-})
-
-local ClearLogButton = DebugTab:CreateButton({
-   Name = "ログをクリア",
-   Callback = function()
-       debugLog = {}
-       LogLabel:Set("ログがクリアされました")
-       log("ログクリア")
-   end,
+VisualTab:CreateParagraph({
+   Title = "ℹ️ ESP機能について", 
+   Content = "ESP機能は即座にBANされるため削除されました。代わりにSilent AimとAI自動操作をご利用ください。"
 })
 
 -- ========== 通知 ==========
 Rayfield:Notify({
-   Title = "読み込み完了",
-   Content = "暗殺者対保安官2 v3 準備完了",
+   Title = "✅ 読み込み完了",
+   Content = "暗殺者対保安官2 完全版 v4 | デバイス: " .. deviceType,
    Duration = 5,
-   Image = nil,
+   Image = 4483362458,
 })
 
-log("========================================")
-log("  暗殺者対保安官2 超高密度射撃 v3")
-log("  作者: @syu_u0316")
-log("  10層射撃技術 + 完全自動化")
-log("========================================")
-
--- ========== 自動更新ループ ==========
-task.spawn(function()
-    while true do
-        task.wait(5)
-        if getEquippedWeapon() then
-            local tool = getEquippedWeapon()
-            if tool ~= weaponData.currentTool then
-                log("🔄 武器変更検出: " .. tool.Name)
-            end
-        end
-    end
-end)
+print("========================================")
+print("✅ パート2/2（UIメニュー）読み込み完了")
+print("🎮 デバイス: " .. deviceType)
+print("🤖 AI自動操作: 利用可能")
+print("🔫 PC/スマホ対応射撃: 利用可能")
+print("========================================")
+print("📝 使い方:")
+print("1. AI自動操作タブで完全自動プレイ")
+print("2. または戦闘タブで手動エイム設定")
+print("3. 射撃タブで自動射撃を有効化")
+print("========================================")
